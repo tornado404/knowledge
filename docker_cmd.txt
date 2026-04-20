@@ -1,0 +1,5 @@
+docker run -d --name milvus-minio -v ${PWD}/milvus_minio:/minio_data -p 9001:9001 -p 9000:9000 minio/minio:latest server /minio_data --console-address ":9001"
+docker run -d --name milvus-etcd -v ${PWD}/milvus_etcd:/etcd quay.io/coreos/etcd:v3.5.5 etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls=http://0.0.0.0:2379 --data-dir=/etcd
+
+docker run -d --name milvus-standalone -v ${PWD}/milvus_data:/milvus_data -p 27017:27017 -p 19530:19530 --link milvus-etcd:etcd --link milvus-minio:minio milvusdb/milvus:2.6-20260417-84a142e3-gpu-amd64 milvus run standalone
+ 

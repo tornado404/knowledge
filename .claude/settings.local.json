@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(pip list:*)",
+      "Bash(pip show:*)",
+      "Bash(python -c \"from src.knowledge_vector import Config, MarkdownLoader, MilvusVectorStore; print\\('Import successful'\\)\")",
+      "Bash(python scripts/ingest.py)",
+      "Bash(python -c \"from langchain_community.embeddings.minimax import MiniMaxEmbeddings; help\\(MiniMaxEmbeddings.__init__\\)\")",
+      "Bash(python:*)",
+      "Bash(docker stop:*)",
+      "Bash(docker rm:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(PYTHONPATH=./src python main.py --mode retrieve --query \"claude code的Tools如何编写\" --k 2)"
+    ]
+  }
+}
