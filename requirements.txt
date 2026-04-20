@@ -1,0 +1,6 @@
+langchain>=0.3.0
+langchain_community>=0.3.0
+langchain_text_splitters>=0.3.0
+unstructured[md]>=0.16.0
+pymilvus>=2.4.0
+python-dotenv>=1.0.0
