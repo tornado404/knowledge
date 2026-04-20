@@ -31,21 +31,37 @@ def main():
 
     elif args.mode == "chat":
         from knowledge_vector.chain import create_rag_chain
+        from knowledge_vector.memory import ConversationMemory
         import readline  # Optional: for better CLI experience
 
-        rag_chain = create_rag_chain()
-        print("Knowledge RAG Chat (type 'quit' to exit)")
-        print("-" * 40)
+        rag_chain = create_rag_chain(use_history=True)
+        memory = ConversationMemory(max_turns=10)
+        print("Knowledge RAG Chat - Multi-turn (type 'quit' to exit, 'clear' to clear history)")
+        print("-" * 50)
 
         while True:
             question = input("\nYou: ").strip()
             if question.lower() in ["quit", "exit", "q"]:
                 break
+            if question.lower() == "clear":
+                memory.clear()
+                print("History cleared.")
+                continue
             if not question:
                 continue
 
-            answer = rag_chain.invoke(question, k=args.k)
+            # Get history for RAG
+            history_text = memory.get_history_for_rag()
+
+            # Invoke with history
+            answer = rag_chain.invoke(question, k=args.k, history=history_text)
+
+            # Add to history
+            memory.add_user(question)
+            memory.add_assistant(answer)
+
             print(f"\nAssistant: {answer}")
+            print(f"[Turn {memory.turn_count}]")
 
     elif args.mode == "retrieve":
         from knowledge_vector.chain import create_rag_chain
