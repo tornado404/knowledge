@@ -129,9 +129,9 @@ class RAGChain:
             "question": question,
         }
 
-        # 如果有历史，添加到 prompt
-        if self.use_history and history:
-            prompt_vars["history"] = history
+        # 如果启用历史模式，始终传递 history 变量（即使为空）
+        if self.use_history:
+            prompt_vars["history"] = history if history else ""
 
         # Generate answer
         answer = self.chain.invoke(prompt_vars)
