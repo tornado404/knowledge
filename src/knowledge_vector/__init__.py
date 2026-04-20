@@ -5,6 +5,7 @@ from .loader import MarkdownLoader
 from .splitter import create_splitter, split_documents
 from .vectorstore import MilvusVectorStore, get_embeddings
 from .chain import create_rag_chain
+from .memory import ConversationMemory
 
 __all__ = [
     "Config",
@@ -14,4 +15,5 @@ __all__ = [
     "MilvusVectorStore",
     "get_embeddings",
     "create_rag_chain",
+    "ConversationMemory",
 ]

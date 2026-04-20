@@ -4,24 +4,36 @@
 
 本项目提供三种运行模式，通过 `main.py` 的 `--mode` 参数选择。
 
-### 模式 1: 交互式对话 (chat)
+### 模式 1: 交互式对话 (chat) - 支持多轮
 
-RAG 对话模式，结合检索和生成：
+RAG 多轮对话模式，结合检索、生成和对话历史：
 
 ```bash
 python main.py --mode chat
 ```
 
+**多轮对话特性**：
+- 自动保存对话历史
+- 支持指代词理解（如"它"、"上面说的"等）
+- 输入 `clear` 可清空历史
+- 默认保存最近 10 轮对话
+
 示例：
 ```
-Knowledge RAG Chat (type 'quit' to exit)
-----------------------------------------
+Knowledge RAG Chat - Multi-turn (type 'quit' to exit, 'clear' to clear history)
+--------------------------------------------------
 
 You: claude code的架构是怎么样的
 
 Assistant: # Claude Code 架构概览
+...
 
-根据参考资料，Claude Code 的架构非常模块化...
+[Turn 1]
+
+You: 它的Tools系统呢
+
+Assistant: Claude Code 的 Tools 系统...
+[Turn 2]
 
 You: quit
 ```
@@ -55,24 +67,29 @@ python main.py --mode api --port 8000 --host 0.0.0.0
 
 #### API 端点
 
-**POST /chat** - 对话
+**POST /chat** - 多轮对话
 
 ```bash
 curl -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
-  -d '{"message": "claude code的Tools如何编写", "k": 4}'
+  -d '{"message": "Claude Code的架构是什么", "session_id": "test1"}'
 ```
 
 响应：
 ```json
 {
-  "answer": "Claude Code 的 Tools 编写方式...",
-  "sources": [
-    {"source": "posts/cc-code-read/02_工具系统.md", "content": "..."},
-    ...
-  ],
-  "session_id": "session_123456"
+  "answer": "Claude Code 的架构...",
+  "sources": [...],
+  "session_id": "test1",
+  "turn_count": 1
 }
+```
+
+**第二轮对话**（使用相同 session_id）：
+```bash
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "它的Tools系统呢", "session_id": "test1"}'
 ```
 
 **GET /health** - 健康检查
@@ -81,22 +98,70 @@ curl -X POST http://localhost:8000/chat \
 curl http://localhost:8000/health
 ```
 
-**GET /sessions/{session_id}/messages** - 获取对话历史
+**GET /sessions/{session_id}/history** - 获取对话历史
+
+```bash
+curl http://localhost:8000/sessions/test1/history
+```
+
+响应：
+```json
+{
+  "session_id": "test1",
+  "turn_count": 2,
+  "messages": [
+    {"role": "user", "content": "Claude Code的架构是什么"},
+    {"role": "assistant", "content": "Claude Code 的架构..."},
+    {"role": "user", "content": "它的Tools系统呢"},
+    {"role": "assistant", "content": "Tools 系统..."}
+  ]
+}
+```
 
 **DELETE /sessions/{session_id}** - 删除会话
+
+```bash
+curl -X DELETE http://localhost:8000/sessions/test1
+```
+
+**GET /sessions** - 列出所有会话
 
 ---
 
 ## 代码调用
 
-### 检索 + 生成（RAG Chain）
+### 多轮 RAG 对话
+
+```python
+from knowledge_vector.chain import create_rag_chain
+from knowledge_vector.memory import ConversationMemory
+
+# 创建 RAG chain（启用历史）
+rag = create_rag_chain(use_history=True)
+
+# 创建记忆
+memory = ConversationMemory(max_turns=10)
+
+# 第一轮
+memory.add_user("Claude Code的架构是什么")
+history = memory.get_history_for_rag()
+answer = rag.invoke("Claude Code的架构是什么", k=4, history=history)
+memory.add_assistant(answer)
+
+# 第二轮（带历史）
+memory.add_user("它的Tools系统呢")
+history = memory.get_history_for_rag()
+answer = rag.invoke("它的Tools系统呢", k=4, history=history)
+memory.add_assistant(answer)
+```
+
+### 单轮 RAG 对话
 
 ```python
 from knowledge_vector.chain import create_rag_chain
 
-rag = create_rag_chain()
+rag = create_rag_chain(use_history=False)
 answer = rag.invoke("你的问题", k=4)
-print(answer)
 ```
 
 ### 仅检索
