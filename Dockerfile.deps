@@ -1,0 +1,7 @@
+FROM langchain/langgraph-api:3.11
+
+# 配置国内 pip 源（清华）
+ENV UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+
+# Install all dependencies including sentence-transformers
+RUN PYTHONDONTWRITEBYTECODE=1 UV_HTTP_TIMEOUT=600 uv pip install --system --no-cache-dir -c /api/constraints.txt langchain>=0.3.0 langchain_community>=0.3.0 langchain_text_splitters>=0.3.0 langchain_huggingface unstructured[md]>=0.16.0 pymilvus>=2.4.0 python-dotenv>=1.0.0 langchain-anthropic sentence-transformers

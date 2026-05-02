@@ -2,23 +2,29 @@
 
 import os
 import sys
+import uuid
+import json
 from pathlib import Path
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any, AsyncGenerator
 from dataclasses import dataclass, field
 from datetime import datetime
 
-# Add src to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+# Add kgsrc to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from typing import Literal
 
 from knowledge_vector.chain import create_rag_chain
 from knowledge_vector.memory import ConversationMemory
+from knowledge_vector.agent import invoke_agent, stream_invoke_agent
 
 
-# Pydantic models
+# ==================== 现有模型 ====================
+
 class ChatMessage(BaseModel):
     """Chat message model."""
     role: str = Field(default="user", description="Message role: user or assistant")
@@ -55,6 +61,34 @@ class HealthResponse(BaseModel):
     collection: str
 
 
+# ==================== OpenAI Chat-Compatible 模型 ====================
+
+class Message(BaseModel):
+    """OpenAI 格式的单条消息"""
+    role: Literal["system", "user", "assistant"]
+    content: str
+
+
+class ChatCompletionRequest(BaseModel):
+    """OpenAI Chat Completions 兼容请求"""
+    model: str = "MiniMax-M2.7"
+    messages: List[Message]
+    temperature: float = Field(default=0.7, ge=0, le=2)
+    max_tokens: int = Field(default=2000, ge=1)
+    stream: bool = False
+    session_id: Optional[str] = None
+
+
+class ChatCompletionResponse(BaseModel):
+    """OpenAI Chat Completions 兼容响应（非流式）"""
+    id: str = Field(default_factory=lambda: f"chatcmpl-{uuid.uuid4().hex[:8]}")
+    object: str = "chat.completion"
+    created: int = Field(default_factory=lambda: int(datetime.now().timestamp()))
+    model: str
+    choices: List[dict]
+    usage: dict = Field(default_factory=lambda: {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+
+
 # In-memory session store with ConversationMemory
 class SessionStore:
     """In-memory session store with ConversationMemory."""
@@ -86,6 +120,10 @@ class SessionStore:
     def has_session(self, session_id: str) -> bool:
         """Check if session exists."""
         return session_id in self.sessions
+
+    def list_sessions(self) -> List[str]:
+        """List all session IDs."""
+        return list(self.sessions.keys())
 
 
 # Global instance
@@ -202,6 +240,105 @@ async def list_sessions():
         "sessions": list(session_store.sessions.keys()),
         "count": len(session_store.sessions),
     }
+
+
+# ==================== OpenAI Chat-Compatible 端点 ====================
+
+def extract_history_from_messages(messages: List[Message]) -> tuple[str, List[dict]]:
+    """从 OpenAI messages 格式提取最新用户问题和历史
+
+    Returns:
+        (user_question, history_list)
+    """
+    history = []
+    user_question = ""
+
+    for msg in messages:
+        if msg.role == "system":
+            continue  # system prompt 在 generate_node 内部处理
+        elif msg.role == "user":
+            if not user_question:
+                user_question = msg.content
+            else:
+                # 之前的用户消息作为历史
+                history.append({"role": "user", "content": msg.content})
+        elif msg.role == "assistant":
+            history.append({"role": "assistant", "content": msg.content})
+
+    return user_question, history
+
+
+async def stream_answer(question: str, history: List[dict], model: str) -> AsyncGenerator[str, None]:
+    """SSE 流式生成回答"""
+    chunk_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
+    created = int(datetime.now().timestamp())
+
+    async for answer_chunk in stream_invoke_agent(question, history):
+        chunk = {
+            "id": chunk_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "delta": {"content": answer_chunk},
+                "finish_reason": None
+            }]
+        }
+        yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
+    # 发送 [DONE]
+    yield "data: [DONE]\n\n"
+
+
+@app.post("/v1/chat/completions")
+async def chat_completions(request: ChatCompletionRequest):
+    """OpenAI Chat-Compatible 端点
+
+    支持:
+    - 非流式响应 (stream: false)
+    - 流式 SSE 响应 (stream: true)
+    - 多轮对话历史传递
+    """
+    try:
+        # 提取历史和最新用户问题
+        user_question, history = extract_history_from_messages(request.messages)
+
+        if not user_question:
+            raise HTTPException(status_code=400, detail="No user message found")
+
+        if request.stream:
+            # 流式响应
+            return StreamingResponse(
+                stream_answer(user_question, history, request.model),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                }
+            )
+        else:
+            # 非流式响应
+            answer = invoke_agent(user_question, history)
+
+            return ChatCompletionResponse(
+                id=f"chatcmpl-{uuid.uuid4().hex[:8]}",
+                object="chat.completion",
+                created=int(datetime.now().timestamp()),
+                model=request.model,
+                choices=[{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": answer},
+                    "finish_reason": "stop"
+                }],
+                usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def run_server(host: str = "0.0.0.0", port: int = 8000):

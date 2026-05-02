@@ -42,6 +42,18 @@ class ConversationMemory:
         """
         self.messages.append(ChatMessage(role=role, content=content))
 
+    def get_history(self) -> List[dict]:
+        """获取对话历史（格式：List[dict]）
+
+        Returns:
+            [{"role": "user"/"assistant", "content": "..."}]
+        """
+        if not self.messages:
+            return []
+
+        recent_messages = self.messages[-(self.max_turns * 2):]
+        return [{"role": msg.role, "content": msg.content} for msg in recent_messages]
+
     def get_history_text(self) -> str:
         """获取格式化的对话历史文本
 

@@ -3,11 +3,10 @@
 import sys
 from pathlib import Path
 
-# Add src to Python path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+# Add kgsrc to Python path
+sys.path.insert(0, str(Path(__file__).parent / "kgsrc"))
 
 import argparse
-
 
 def main():
     parser = argparse.ArgumentParser(description="Knowledge RAG Chat")
@@ -30,13 +29,12 @@ def main():
         run_server(host=args.host, port=args.port)
 
     elif args.mode == "chat":
-        from knowledge_vector.chain import create_rag_chain
+        from knowledge_vector.agent import invoke_agent
         from knowledge_vector.memory import ConversationMemory
         import readline  # Optional: for better CLI experience
 
-        rag_chain = create_rag_chain(use_history=True)
         memory = ConversationMemory(max_turns=10)
-        print("Knowledge RAG Chat - Multi-turn (type 'quit' to exit, 'clear' to clear history)")
+        print("Knowledge RAG Chat - Agentic RAG with routing (type 'quit' to exit, 'clear' to clear history)")
         print("-" * 50)
 
         while True:
@@ -50,11 +48,11 @@ def main():
             if not question:
                 continue
 
-            # Get history for RAG
-            history_text = memory.get_history_for_rag()
+            # Get history for RAG (format: [{"role": "user"/"assistant", "content": "..."}])
+            history = memory.get_history()
 
-            # Invoke with history
-            answer = rag_chain.invoke(question, k=args.k, history=history_text)
+            # Invoke agent with routing
+            answer = invoke_agent(question, history=history)
 
             # Add to history
             memory.add_user(question)

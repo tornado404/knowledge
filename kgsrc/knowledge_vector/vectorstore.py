@@ -4,7 +4,7 @@ from typing import List, Optional, Any
 from pathlib import Path
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
-from pymilvus import MilvusClient
+from pymilvus import MilvusClient, CollectionSchema, FieldSchema, DataType
 
 from .config import config
 
@@ -90,15 +90,32 @@ class MilvusVectorStore:
         sample_vector = self.embeddings.embed_query(texts[0] if texts else "test")
         dimension = len(sample_vector)
 
-        # Create collection if not exists
+        # Create collection if not exists (Milvus 2.6 schema API)
         if self.collection_name not in client.list_collections():
+            schema = CollectionSchema(
+                fields=[
+                    FieldSchema(name="pk", dtype=DataType.INT64, is_primary=True, auto_id=True),
+                    FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=dimension),
+                    FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=65535),
+                    FieldSchema(name="source", dtype=DataType.VARCHAR, max_length=512),
+                ],
+                description="Knowledge base collection",
+            )
             client.create_collection(
                 collection_name=self.collection_name,
-                dimension=dimension,
-                primary_field_name="pk",
-                vector_field_name="vector",
+                schema=schema,
+            )
+
+            # Create index for vector field (Milvus 2.6 requires explicit index)
+            index_params = client.prepare_index_params()
+            index_params.add_index(
+                field_name="vector",
+                index_type="AUTOINDEX",
                 metric_type="IP",
-                auto_id=True,
+            )
+            client.create_index(
+                collection_name=self.collection_name,
+                index_params=index_params,
             )
 
         # Generate all embeddings
