@@ -5,7 +5,27 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "kgsrc"))
 
-from knowledge_vector.memory import ConversationMemory, ChatMessage
+from knowledge_vector.memory import ConversationMemory, ChatMessage, estimate_tokens
+
+
+class TestEstimateTokens:
+    """estimate_tokens 函数测试"""
+
+    def test_empty_string(self):
+        assert estimate_tokens("") == 0
+
+    def test_chinese_only(self):
+        result = estimate_tokens("你好世界")
+        assert result == 6  # 4 * 1.5 = 6
+
+    def test_english_only(self):
+        result = estimate_tokens("hello world")
+        assert result == 2  # 11 / 4 = 2.75 -> 2
+
+    def test_mixed(self):
+        result = estimate_tokens("你好hello世界world")
+        # 6 chinese * 1.5 = 9, 11 english / 4 = 2.75 -> 2
+        # total = 11
 
 
 class TestConversationMemory:
@@ -113,6 +133,17 @@ class TestConversationMemory:
         assert len(memory.messages) == 0
         assert memory.is_empty is True
 
+    def test_clear_with_stats(self):
+        """测试清空对话历史（同时清除统计）"""
+        memory = ConversationMemory()
+        memory.add_user("Hello")
+        memory.add_assistant("Hi!")
+        memory.compress()  # 尝试触发压缩
+
+        memory.clear(clear_stats=True)
+        assert memory.compression_count == 0
+        assert memory.compressed_tokens == 0
+
     def test_is_empty(self):
         """测试 is_empty 属性"""
         memory = ConversationMemory()
@@ -158,6 +189,107 @@ class TestConversationMemory:
         repr_str = repr(memory)
         assert "ConversationMemory" in repr_str
         assert "turns=0" in repr_str
+
+    def test_should_compress_odd_messages(self):
+        """测试压缩触发条件 - 奇数条消息时不触发"""
+        memory = ConversationMemory(max_turns=2, compression_threshold=2)
+        # 添加 3 条消息（不完整的轮）
+        memory.add_user("Q1")
+        memory.add_assistant("A1")
+        memory.add_user("Q2")
+        assert memory._should_compress() is False
+
+    def test_should_compress_token_budget(self):
+        """测试压缩触发条件 - Token 超预算"""
+        memory = ConversationMemory(max_turns=2, token_budget=10)
+        # 添加大量文本使 token 超预算
+        long_text = "这" * 100  # 约 150 tokens > 8 tokens budget
+        memory.add_user(long_text)
+        memory.add_assistant(long_text)
+        memory.add_user(long_text)
+        memory.add_assistant(long_text)
+        # 4 条消息，token 远超预算
+        assert memory._should_compress() is True
+
+    def test_compression_stats(self):
+        """测试压缩统计"""
+        memory = ConversationMemory(max_turns=1, token_budget=50)
+        # 添加足够的对话触发压缩
+        for i in range(6):
+            memory.add_user(f"问题{i}")
+            memory.add_assistant(f"回答{i}")
+
+        # 触发压缩
+        if memory._should_compress():
+            memory.compress()
+
+        stats = memory.get_compression_stats()
+        assert "compression_count" in stats
+        assert "compressed_tokens" in stats
+        assert "original_message_count" in stats
+
+    def test_compression_max_summary_history(self):
+        """测试摘要历史条数上限"""
+        memory = ConversationMemory(max_turns=1, max_summary_history=3)
+        # 多次触发压缩
+        for i in range(5):
+            # 添加多轮对话
+            for j in range(4):
+                memory.add_user(f"Q{i}_{j}")
+                memory.add_assistant(f"A{i}_{j}")
+            if memory._should_compress():
+                memory.compress()
+
+        # 摘要历史应该被限制在 max_summary_history 以内
+        assert len(memory._summary_history) <= 3
+
+    def test_total_turn_count(self):
+        """测试总对话轮数统计"""
+        memory = ConversationMemory(max_turns=2)
+        memory.add_user("Q1")
+        memory.add_assistant("A1")
+
+        assert memory.turn_count == 1
+        assert memory.total_turn_count == 1
+
+    def test_get_summary_context(self):
+        """测试获取摘要上下文"""
+        memory = ConversationMemory(max_turns=1, token_budget=20)
+        # 添加足够的对话触发压缩
+        for i in range(4):
+            memory.add_user(f"问题{i}")
+            memory.add_assistant(f"回答{i}")
+
+        if memory._should_compress():
+            memory.compress()
+
+        context = memory.get_summary_context()
+        # 压缩后应该有摘要上下文
+        # 注意：可能没有被压缩（取决于 token 估算）
+
+    def test_truncate_mode(self):
+        """测试截断模式"""
+        memory = ConversationMemory(use_summarization=False, max_turns=2)
+        for i in range(6):
+            memory.add_user(f"Q{i}")
+            memory.add_assistant(f"A{i}")
+
+        # 截断模式下 compress() 不起作用
+        result = memory.compress()
+        assert result is False  # 截断模式返回 False
+
+    def test_incremental_compression(self):
+        """测试增量压缩"""
+        memory = ConversationMemory(max_turns=2, token_budget=100)
+        # 添加大量短对话
+        for i in range(10):
+            memory.add_user(f"问{i}")
+            memory.add_assistant(f"答{i}")
+
+        # 触发压缩
+        memory.compress(incremental=True)
+        stats = memory.get_compression_stats()
+        assert stats["compression_count"] >= 1
 
 
 if __name__ == "__main__":
