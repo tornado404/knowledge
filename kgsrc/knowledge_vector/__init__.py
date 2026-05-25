@@ -5,7 +5,7 @@ from .loader import MarkdownLoader
 from .splitter import create_splitter, split_documents
 from .vectorstore import MilvusVectorStore, get_embeddings
 from .chain import create_rag_chain
-from .memory import ConversationMemory
+from .memory import ConversationMemory, CompressionCallback, MessageSummary, estimate_tokens, AutoCompressPolicy
 from .agent import graph
 
 __all__ = [
@@ -17,5 +17,9 @@ __all__ = [
     "get_embeddings",
     "create_rag_chain",
     "ConversationMemory",
+    "CompressionCallback",
+    "MessageSummary",
+    "estimate_tokens",
+    "AutoCompressPolicy",
     "graph",
 ]

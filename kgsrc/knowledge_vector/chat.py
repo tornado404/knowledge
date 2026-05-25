@@ -5,7 +5,7 @@ import sys
 import uuid
 import json
 from pathlib import Path
-from typing import List, Optional, Dict, Any, AsyncGenerator
+from typing import List, Optional, Dict, Any, AsyncGenerator, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -91,15 +91,45 @@ class ChatCompletionResponse(BaseModel):
 
 # In-memory session store with ConversationMemory
 class SessionStore:
-    """In-memory session store with ConversationMemory."""
+    """In-memory session store with ConversationMemory.
 
-    def __init__(self):
+    支持上下文压缩:
+    - max_turns: 最大保存的对话轮数（默认10）
+    - compression_threshold: 开始压缩的阈值（默认5）
+    - use_summarization: 是否使用摘要压缩（默认True）
+    - max_summary_history: 最大摘要历史条数（默认10）
+    - auto_compress_policy: 自动压缩策略（默认 ON_EVERY_ADD）
+    """
+
+    def __init__(
+        self,
+        max_turns: int = 10,
+        compression_threshold: int = 5,
+        use_summarization: bool = True,
+        token_budget: int = 3000,
+        max_summary_history: int = 10,
+        auto_compress_policy: str = "on_every_add",
+    ):
+        from .memory import AutoCompressPolicy
+
         self.sessions: Dict[str, ConversationMemory] = {}
+        self.max_turns = max_turns
+        self.compression_threshold = compression_threshold
+        self.use_summarization = use_summarization
+        self.token_budget = token_budget
+        self.max_summary_history = max_summary_history
+        self.auto_compress_policy = AutoCompressPolicy.from_string(auto_compress_policy)
 
     def get_memory(self, session_id: str) -> ConversationMemory:
         """Get or create a ConversationMemory for a session."""
         if session_id not in self.sessions:
-            self.sessions[session_id] = ConversationMemory(max_turns=10)
+            self.sessions[session_id] = ConversationMemory(
+                max_turns=self.max_turns,
+                compression_threshold=self.compression_threshold,
+                use_summarization=self.use_summarization,
+                token_budget=self.token_budget,
+                max_summary_history=self.max_summary_history,
+            )
         return self.sessions[session_id]
 
     def get_messages(self, session_id: str) -> List[ChatMessage]:
@@ -107,10 +137,39 @@ class SessionStore:
         memory = self.get_memory(session_id)
         return memory.get_messages()
 
+    def get_history(self, session_id: str) -> List[dict]:
+        """Get conversation history as list of dicts."""
+        memory = self.get_memory(session_id)
+        return memory.get_history()
+
+    def get_summary_context(self, session_id: str) -> str:
+        """Get summary context for agent system prompt."""
+        memory = self.get_memory(session_id)
+        return memory.get_summary_context()
+
+    def get_history_with_summary(self, session_id: str) -> Tuple[List[dict], str]:
+        """Get history and summary separately."""
+        memory = self.get_memory(session_id)
+        return memory.get_history_with_summary()
+
     def add_message(self, session_id: str, role: str, content: str):
-        """Add a message to the session history."""
+        """Add a message to the session history and auto-compress if needed."""
         memory = self.get_memory(session_id)
         memory.add_message(role=role, content=content)
+
+        # 自动压缩检查（使用策略）
+        if self.use_summarization and self.auto_compress_policy.should_compress(memory.turn_count):
+            if memory._should_compress():
+                memory.compress()
+
+    def compress_session(self, session_id: str) -> bool:
+        """手动触发会话压缩
+
+        Returns:
+            是否实际执行了压缩
+        """
+        memory = self.get_memory(session_id)
+        return memory.compress()
 
     def clear_session(self, session_id: str):
         """Clear session history."""
@@ -124,6 +183,11 @@ class SessionStore:
     def list_sessions(self) -> List[str]:
         """List all session IDs."""
         return list(self.sessions.keys())
+
+    def get_compression_stats(self, session_id: str) -> dict:
+        """Get compression stats for a session."""
+        memory = self.get_memory(session_id)
+        return memory.get_compression_stats()
 
 
 # Global instance
@@ -147,16 +211,19 @@ app.add_middleware(
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    """Chat endpoint - ask a question and get RAG-powered answer with history."""
+    """Chat endpoint - ask a question and get RAG-powered answer with history.
+
+    支持自动上下文压缩，当对话轮数达到阈值时自动压缩旧对话。
+    """
     try:
         # Get or create session
         session_id = request.session_id or f"session_{datetime.now().timestamp()}"
 
+        # Add user message to history (auto-compress if threshold reached)
+        session_store.add_message(session_id, "user", request.message)
+
         # Get conversation memory
         memory = session_store.get_memory(session_id)
-
-        # Add user message to history
-        memory.add_user(request.message)
 
         # Get conversation history for RAG
         history_text = memory.get_history_for_rag() if request.include_history else ""
@@ -184,8 +251,11 @@ async def chat(request: ChatRequest):
             for doc in docs
         ]
 
-        # Add assistant message to history
-        memory.add_assistant(answer)
+        # Add assistant message to history (auto-compress if threshold reached)
+        session_store.add_message(session_id, "assistant", answer)
+
+        # Get updated turn count (after compression)
+        memory = session_store.get_memory(session_id)
 
         return ChatResponse(
             answer=answer,
@@ -239,6 +309,29 @@ async def list_sessions():
     return {
         "sessions": list(session_store.sessions.keys()),
         "count": len(session_store.sessions),
+    }
+
+
+@app.get("/sessions/{session_id}/stats")
+async def get_session_stats(session_id: str):
+    """Get compression stats for a session."""
+    if not session_store.has_session(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    return session_store.get_compression_stats(session_id)
+
+
+@app.post("/sessions/{session_id}/compress")
+async def compress_session(session_id: str):
+    """Manually trigger compression for a session."""
+    if not session_store.has_session(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    compressed = session_store.compress_session(session_id)
+    return {
+        "session_id": session_id,
+        "compressed": compressed,
+        "stats": session_store.get_compression_stats(session_id),
     }
 
 
@@ -345,6 +438,18 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
     """Run the FastAPI server."""
     import uvicorn
     uvicorn.run(app, host=host, port=port)
+
+
+# ==================== Multi-Agent 端点 ====================
+
+def _register_multi_agent_routes():
+    """注册 Multi-Agent 路由"""
+    from knowledge_vector.multi_agent.api_endpoints import router as multi_agent_router
+    app.include_router(multi_agent_router)
+
+
+# 注册 multi-agent 路由
+_register_multi_agent_routes()
 
 
 if __name__ == "__main__":
