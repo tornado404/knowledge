@@ -479,7 +479,7 @@ class ConversationMemory:
             # 全量压缩：保留最近的 recent_count 条消息
             retained_messages = self.messages[-recent_count:]
 
-        # 对被裁剪的旧消息进行摘要
+        # 对被裁剪的旧消息进行摘要（摘要生成由 compress() 统一处理）
         retained_ids = {id(m) for m in retained_messages}
         old_messages = [m for m in self.messages if id(m) not in retained_ids]
 
@@ -489,17 +489,8 @@ class ConversationMemory:
         # 计算被压缩内容的 token 数（用于质量评估）
         old_messages_total_tokens = sum(estimate_tokens(m.content) for m in old_messages)
 
-        # 生成摘要：优先使用自定义函数，其次 LLM，最后模板
-        if self.summarizer_fn:
-            summary_text = self.summarizer_fn(old_messages)
-        elif self.use_llm_summarizer:
-            llm_summarizer = self._get_llm_summarizer()
-            if llm_summarizer:
-                summary_text = llm_summarizer.summarize(old_messages)
-            else:
-                summary_text = self._default_summarize(old_messages)
-        else:
-            summary_text = self._default_summarize(old_messages)
+        # 生成摘要（委托给 _generate_summary，支持重试）
+        summary_text = self._generate_summary(old_messages)
 
         # 计算压缩质量：摘要 token / 原始 token，值越低说明压缩率越高
         if old_messages_total_tokens > 0 and summary_text:
@@ -774,54 +765,72 @@ class ConversationMemory:
 
         return "\n\n".join(parts)
 
-    def compress(self, incremental: bool = True) -> bool:
+    def compress(self, incremental: bool = True, max_retries: int = 1) -> Tuple[bool, str]:
         """触发压缩（将当前消息压缩为摘要）
 
         Args:
             incremental: 是否增量压缩。True=只压缩超出预算的部分，False=全量压缩到 max_turns
+            max_retries: LLM 摘要失败时的最大重试次数
 
         Returns:
-            是否实际执行了压缩
+            (success, reason) - 是否实际执行了压缩及原因
+                success=True: 成功压缩
+                success=False: 原因包括 "not_needed", "cancelled", "failed"
         """
         if not self.use_summarization:
-            return False  # 截断模式不需要压缩
+            return False, "truncation_mode"  # 截断模式不需要压缩
 
         if not self._should_compress():
-            return False
+            return False, "not_needed"
 
         # 使用基于 token 的智能压缩
         retained_messages, summary_content = self._compress_via_summarization(incremental=incremental)
 
         if not retained_messages:
-            return False
+            return False, "no_retained_messages"
 
         # 如果有旧消息需要压缩
         old_messages = [m for m in self.messages if id(m) not in {id(m2) for m2 in retained_messages}]
 
-        if old_messages and summary_content:
-            # 压缩前回调检查
-            if self.compression_callback:
-                old_tokens = sum(estimate_tokens(m.content) for m in old_messages)
-                if not self.compression_callback.before_compress(len(old_messages), old_tokens):
-                    return False  # 用户取消压缩
+        if not old_messages or not summary_content:
+            return False, "no_old_messages"
 
-            # 统计信息
+        # 压缩前回调检查
+        if self.compression_callback:
             old_tokens = sum(estimate_tokens(m.content) for m in old_messages)
-            self.compressed_tokens += old_tokens
-            self.original_message_count += len(old_messages)
-            self.compression_count += 1
+            if not self.compression_callback.before_compress(len(old_messages), old_tokens):
+                return False, "cancelled"
 
-            # 保存摘要（限制数量）
-            summary = MessageSummary(
-                content=summary_content,
-                original_count=len(old_messages),
-                first_msg_time=old_messages[0].timestamp,
-                last_msg_time=old_messages[-1].timestamp,
-            )
-            self._summary_history.append(summary)
+        # LLM 重试逻辑
+        final_summary = summary_content
+        for attempt in range(max_retries + 1):
+            if attempt > 0:
+                # 重试：重新生成摘要
+                final_summary = self._generate_summary(old_messages)
 
-            # 摘要历史过多时，合并旧摘要而非直接丢弃
-            self._merge_old_summaries()
+            if final_summary:
+                break
+
+        if not final_summary:
+            return False, "failed"
+
+        # 统计信息
+        old_tokens = sum(estimate_tokens(m.content) for m in old_messages)
+        self.compressed_tokens += old_tokens
+        self.original_message_count += len(old_messages)
+        self.compression_count += 1
+
+        # 保存摘要（限制数量）
+        summary = MessageSummary(
+            content=final_summary,
+            original_count=len(old_messages),
+            first_msg_time=old_messages[0].timestamp,
+            last_msg_time=old_messages[-1].timestamp,
+        )
+        self._summary_history.append(summary)
+
+        # 摘要历史过多时，合并旧摘要而非直接丢弃
+        self._merge_old_summaries()
 
         # 保留消息
         self.messages = retained_messages
@@ -830,8 +839,27 @@ class ConversationMemory:
         if self.compression_callback:
             self.compression_callback.on_compress(self.get_compression_stats())
 
-        # 只有实际发生了压缩才返回 True
-        return bool(old_messages and summary_content)
+        return True, "success"
+
+    def _generate_summary(self, messages: List["ChatMessage"]) -> str:
+        """生成摘要（内部方法，支持重试）
+
+        Args:
+            messages: 需要生成摘要的消息
+
+        Returns:
+            摘要内容，失败返回空字符串
+        """
+        # 生成摘要：优先使用自定义函数，其次 LLM，最后模板
+        if self.summarizer_fn:
+            return self.summarizer_fn(messages)
+        elif self.use_llm_summarizer:
+            llm_summarizer = self._get_llm_summarizer()
+            if llm_summarizer:
+                return llm_summarizer.summarize(messages)
+            return self._default_summarize(messages)
+        else:
+            return self._default_summarize(messages)
 
     def _merge_old_summaries(self):
         """合并旧摘要，而非 FIFO 丢弃

@@ -180,20 +180,20 @@ class SessionStore:
         if self.persistence and self.persistence.auto_save:
             self.persistence.save_session(session_id, memory)
 
-    def compress_session(self, session_id: str) -> bool:
+    def compress_session(self, session_id: str) -> Tuple[bool, str]:
         """手动触发会话压缩
 
         Returns:
-            是否实际执行了压缩
+            (success, reason) - 是否实际执行了压缩及原因
         """
         memory = self.get_memory(session_id)
-        result = memory.compress()
+        success, reason = memory.compress()
 
         # 压缩后保存
-        if result and self.persistence:
+        if success and self.persistence:
             self.persistence.save_session(session_id, memory)
 
-        return result
+        return success, reason
 
     def clear_session(self, session_id: str):
         """Clear session history."""
@@ -381,10 +381,11 @@ async def compress_session(session_id: str):
     if not session_store.has_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
 
-    compressed = session_store.compress_session(session_id)
+    success, reason = session_store.compress_session(session_id)
     return {
         "session_id": session_id,
-        "compressed": compressed,
+        "compressed": success,
+        "reason": reason,
         "stats": session_store.get_compression_stats(session_id),
     }
 
