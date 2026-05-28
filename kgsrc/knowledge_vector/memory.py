@@ -1089,9 +1089,13 @@ class MultiAgentContext:
         """获取压缩后的完整上下文"""
         return self.memory.get_compressed_context()
 
-    def compress(self):
-        """手动触发压缩"""
-        self.memory.compress()
+    def compress(self, incremental: bool = True, max_retries: int = 1) -> Tuple[bool, str]:
+        """手动触发压缩
+
+        Returns:
+            (success, reason) - 压缩是否成功及原因
+        """
+        return self.memory.compress(incremental=incremental, max_retries=max_retries)
 
     def register_agent(self, agent_id: str, agent_type: str) -> AgentContext:
         """注册 Agent 上下文"""
