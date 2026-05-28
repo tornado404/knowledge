@@ -812,7 +812,14 @@ class ConversationMemory:
         old_messages = [m for m in self.messages if id(m) not in {id(m2) for m2 in retained_messages}]
 
         if not old_messages or not summary_content:
-            return False, "no_old_messages"
+            # 如果摘要为空，尝试重试生成
+            for attempt in range(max_retries + 1):
+                if attempt > 0:
+                    summary_content = self._generate_summary(old_messages)
+                if summary_content:
+                    break
+            else:
+                return False, "failed"
 
         # 压缩前回调检查
         if self.compression_callback:
@@ -820,18 +827,7 @@ class ConversationMemory:
             if not self.compression_callback.before_compress(len(old_messages), old_tokens):
                 return False, "cancelled"
 
-        # LLM 重试逻辑
         final_summary = summary_content
-        for attempt in range(max_retries + 1):
-            if attempt > 0:
-                # 重试：重新生成摘要
-                final_summary = self._generate_summary(old_messages)
-
-            if final_summary:
-                break
-
-        if not final_summary:
-            return False, "failed"
 
         # 统计信息
         old_tokens = sum(estimate_tokens(m.content) for m in old_messages)
