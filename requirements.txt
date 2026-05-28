@@ -5,3 +5,6 @@ unstructured[md]>=0.16.0
 pymilvus>=2.4.0
 python-dotenv>=1.0.0
 tavily-python>=0.3.0
+e2b>=0.10.0
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
