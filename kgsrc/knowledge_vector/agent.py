@@ -12,6 +12,7 @@ from langsmith import traceable
 
 from .vectorstore import MilvusVectorStore
 from .config import config
+from .memory import estimate_tokens
 
 # 启用 LangSmith tracing（如果配置了 API Key）
 if config.langsmith_api_key:
@@ -30,6 +31,7 @@ class AgentState(TypedDict):
     answer: str           # 最终答案
     route_decision: str   # 路由决策: "vector_only" | "web_only" | "both"
     sources: List[dict]   # 检索来源信息
+    summary_context: str  # 压缩后的历史摘要上下文
 
 
 def create_vectorstore_retriever(collection_name: str = None):
@@ -288,15 +290,24 @@ def generate_node(state: AgentState) -> AgentState:
 
     system_content += f"参考信息：\n{state['context']}"
 
+    # 注入压缩后的历史摘要上下文
+    summary_ctx = state.get("summary_context", "")
+    if summary_ctx:
+        system_content += f"\n\n对话历史摘要：\n{summary_ctx}"
+
     # 构建消息历史
     messages = []
     messages.append(SystemMessage(content=system_content))
 
     print(f"[generate] system_content: {system_content[:100]}...")
 
+    # 基于 token 预算截断历史消息
+    truncated_messages = _truncate_messages_by_token(state["messages"], DEFAULT_TOKEN_BUDGET)
+    print(f"[generate] 原始消息数: {len(state['messages'])}, 截断后: {len(truncated_messages)}")
+
     # 添加历史消息
     has_messages = False
-    for msg in state["messages"]:
+    for msg in truncated_messages:
         if msg["role"] == "user":
             messages.append(HumanMessage(content=msg["content"]))
             has_messages = True
@@ -425,12 +436,13 @@ graph = create_rag_agent()
 
 
 @traceable(run_type="chain")
-def invoke_agent(question: str, history: List[dict] = None):
+def invoke_agent(question: str, history: List[dict] = None, summary_context: str = ""):
     """调用 agent 获取回答
 
     Args:
         question: 用户问题
         history: 对话历史 [{"role": "user"/"assistant", "content": "..."}]
+        summary_context: 压缩后的历史摘要上下文
 
     Returns:
         回答文本
@@ -445,6 +457,7 @@ def invoke_agent(question: str, history: List[dict] = None):
         "answer": "",
         "route_decision": "",
         "sources": [],
+        "summary_context": summary_context or "",
         "web_search_done": False,
     }
 
@@ -452,12 +465,13 @@ def invoke_agent(question: str, history: List[dict] = None):
     return result["answer"]
 
 
-async def stream_invoke_agent(question: str, history: List[dict] = None):
+async def stream_invoke_agent(question: str, history: List[dict] = None, summary_context: str = ""):
     """异步流式调用 agent，yield 增量 answer
 
     Args:
         question: 用户问题
         history: 对话历史 [{"role": "user"/"assistant", "content": "..."}]
+        summary_context: 压缩后的历史摘要上下文
 
     Yields:
         增量回答文本
@@ -472,6 +486,7 @@ async def stream_invoke_agent(question: str, history: List[dict] = None):
         "answer": "",
         "route_decision": "",
         "sources": [],
+        "summary_context": summary_context or "",
         "web_search_done": False,
     }
 
@@ -484,3 +499,77 @@ async def stream_invoke_agent(question: str, history: List[dict] = None):
             if new_content:
                 yield new_content
             previous_answer = current_answer
+
+
+# ========== Token 控制常量 ==========
+DEFAULT_TOKEN_BUDGET = 3000
+
+
+def _truncate_messages_by_token(messages: List[dict], max_tokens: int = DEFAULT_TOKEN_BUDGET) -> List[dict]:
+    """基于 token 预算截断消息历史"""
+    if not messages:
+        return messages
+
+    budget = max_tokens * 0.8
+    total_tokens = sum(estimate_tokens(m["content"]) for m in messages)
+    if total_tokens <= budget:
+        return messages
+
+    # 从后向前保留（保留最新对话）
+    truncated = []
+    current_tokens = 0
+
+    for msg in reversed(messages):
+        msg_tokens = estimate_tokens(msg["content"])
+        if current_tokens + msg_tokens <= budget:
+            truncated.insert(0, msg)
+            current_tokens += msg_tokens
+        else:
+            break
+
+    # 如果截断后为空，至少保留最后一条
+    if not truncated and messages:
+        return [messages[-1]]
+
+    return truncated
+
+def invoke_multi_agent(question: str, history: List[dict] = None, session_id: str = None):
+    """调用 Multi-Agent 系统处理问题
+
+    Args:
+        question: 用户问题
+        history: 对话历史
+        session_id: 会话 ID
+
+    Returns:
+        回答文本或任务 ID
+    """
+    import asyncio
+    from .multi_agent import get_orchestrator
+
+    async def _run():
+        orchestrator = get_orchestrator()
+        await orchestrator.initialize()
+
+        sid = session_id or f"session_{id(question)}"
+        state = await orchestrator.process_question(sid, question)
+
+        # 简单等待完成（实际应该用更好的机制）
+        for _ in range(30):
+            await asyncio.sleep(1)
+            result = await orchestrator.get_task_result(state.task_id)
+            if result and result["status"] in ["done", "failed", "paused"]:
+                break
+
+        result = await orchestrator.get_task_result(state.task_id)
+        await orchestrator.shutdown()
+        return result
+
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    result = loop.run_until_complete(_run())
+    return result

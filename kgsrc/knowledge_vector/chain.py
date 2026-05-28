@@ -9,6 +9,7 @@ from langchain_core.documents import Document
 
 from .vectorstore import MilvusVectorStore
 from .config import config
+from .memory import estimate_tokens
 
 
 # Default system prompt for RAG (单轮)
@@ -30,6 +31,9 @@ DEFAULT_HISTORY_SYSTEM_PROMPT = """你是一个知识库助手。请根据以下
 参考信息：
 {context}
 """
+
+# Token 预算（保守估计 4K context window）
+DEFAULT_TOKEN_BUDGET = 3000
 
 
 def create_rag_chain(
@@ -66,6 +70,7 @@ class RAGChain:
         model_name: str = None,
         system_prompt: str = None,
         use_history: bool = True,
+        token_budget: int = DEFAULT_TOKEN_BUDGET,
     ):
         """Initialize RAG Chain.
 
@@ -74,12 +79,14 @@ class RAGChain:
             model_name: LLM model name.
             system_prompt: System prompt template with {context} placeholder.
             use_history: 是否使用多轮对话模式.
+            token_budget: History token 预算上限.
         """
         self.vectorstore = MilvusVectorStore(collection_name=collection_name)
         self.vectorstore.load()
 
         self.model_name = model_name or config.anthropic_model or "MiniMax-M2.7"
         self.use_history = use_history
+        self.token_budget = token_budget
 
         # 选择 prompt 模板
         if use_history and system_prompt is None:
@@ -98,6 +105,36 @@ class RAGChain:
 
         # Create chain: prompt -> llm -> output
         self.chain = self.prompt | self.llm | StrOutputParser()
+
+    def _truncate_history(self, history: str) -> str:
+        """基于 token 预算截断历史字符串"""
+        if not history:
+            return history
+
+        total_tokens = estimate_tokens(history)
+        budget = self.token_budget * 0.8
+        if total_tokens <= budget:
+            return history
+
+        # 截断策略：从后向前保留（保留最新对话）
+        lines = history.split("\n")
+        truncated_lines = []
+        current_tokens = 0
+
+        for line in reversed(lines):
+            line_tokens = estimate_tokens(line)
+            if current_tokens + line_tokens <= budget:
+                truncated_lines.insert(0, line)
+                current_tokens += line_tokens
+            else:
+                break
+
+        # 如果截断后仍有大量消息，说明截断成功
+        if truncated_lines:
+            return "\n".join(truncated_lines)
+
+        # 极端情况：只保留最后一条
+        return lines[-1] if lines else history
 
     def invoke(
         self,
@@ -131,7 +168,9 @@ class RAGChain:
 
         # 如果启用历史模式，始终传递 history 变量（即使为空）
         if self.use_history:
-            prompt_vars["history"] = history if history else ""
+            # 基于 token 预算截断历史
+            truncated_history = self._truncate_history(history) if history else ""
+            prompt_vars["history"] = truncated_history
 
         # Generate answer
         answer = self.chain.invoke(prompt_vars)

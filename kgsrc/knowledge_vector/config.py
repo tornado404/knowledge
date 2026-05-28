@@ -37,6 +37,22 @@ class Config:
     langsmith_tracing: bool = False
     langsmith_project: str = "knowledge-rag"
 
+    # Multi-Agent Configuration
+    multi_agent_enabled: bool = False
+    e2b_api_key: str = ""
+    sandbox_pool_size: int = 5
+    sandbox_timeout: int = 300
+    max_subtasks: int = 10
+    task_timeout: int = 120
+
+    # Compression Configuration
+    use_llm_summarizer: bool = False  # 是否使用 LLM 生成语义摘要
+
+    # Session Persistence Configuration
+    session_persistence: bool = True  # 是否启用会话持久化
+    session_storage_dir: str = "./sessions"  # 会话存储目录
+    session_max_age_days: int = 30  # 会话最大保留天数
+
     @classmethod
     def from_env(cls) -> "Config":
         """Create Config from environment variables."""
@@ -54,6 +70,16 @@ class Config:
             langsmith_api_key=os.getenv("LANGSMITH_API_KEY", ""),
             langsmith_tracing=os.getenv("LANGSMITH_TRACING", "false").lower() == "true",
             langsmith_project=os.getenv("LANGSMITH_PROJECT", "knowledge-rag"),
+            multi_agent_enabled=os.getenv("MULTI_AGENT_ENABLED", "false").lower() == "true",
+            e2b_api_key=os.getenv("E2B_API_KEY", ""),
+            sandbox_pool_size=int(os.getenv("SANDBOX_POOL_SIZE", "5")),
+            sandbox_timeout=int(os.getenv("SANDBOX_TIMEOUT", "300")),
+            max_subtasks=int(os.getenv("MAX_SUBTASKS", "10")),
+            task_timeout=int(os.getenv("TASK_TIMEOUT", "120")),
+            use_llm_summarizer=os.getenv("USE_LLM_SUMMARIZER", "false").lower() == "true",
+            session_persistence=os.getenv("SESSION_PERSISTENCE", "true").lower() == "true",
+            session_storage_dir=os.getenv("SESSION_STORAGE_DIR", "./sessions"),
+            session_max_age_days=int(os.getenv("SESSION_MAX_AGE_DAYS", "30")),
         )
 
 

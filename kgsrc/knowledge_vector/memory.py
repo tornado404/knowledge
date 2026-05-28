@@ -6,15 +6,31 @@ from datetime import datetime
 import re
 
 
-# Token 估算常量
+# ========== Token 估算 ==========
+
+# 尝试使用 tiktoken 精确计数，不可用时回退到启发式
+_tiktoken_encoder = None
+
+def _get_tiktoken_encoder():
+    """延迟加载 tiktoken encoder"""
+    global _tiktoken_encoder
+    if _tiktoken_encoder is not None:
+        return _tiktoken_encoder
+    try:
+        import tiktoken
+        _tiktoken_encoder = tiktoken.get_encoding("cl100k_base")
+        return _tiktoken_encoder
+    except Exception:
+        return None
+
+
 CHINESE_CHARS_PATTERN = re.compile(r'[一-鿿]')
 
 
 def estimate_tokens(text: str) -> int:
-    """估算文本的 token 数量（统一实现）
+    """估算文本的 token 数量
 
-    使用公式：中文约 1.5 tokens/字，英文约 4 chars/token
-    实际 tokenization 时，英文约 4 字符 = 1 token
+    优先使用 tiktoken 精确计数，不可用时回退到启发式公式。
 
     Args:
         text: 输入文本
@@ -24,6 +40,12 @@ def estimate_tokens(text: str) -> int:
     """
     if not text:
         return 0
+
+    encoder = _get_tiktoken_encoder()
+    if encoder:
+        return len(encoder.encode(text))
+
+    # 回退：启发式公式
     chinese_chars = len(CHINESE_CHARS_PATTERN.findall(text))
     other_chars = len(text) - chinese_chars
     return int(chinese_chars * 1.5 + other_chars * 0.25)
@@ -56,6 +78,149 @@ class CompressionCallback:
             stats: 压缩统计信息
         """
         pass
+
+
+# ========== LLM 摘要生成器 ==========
+
+class LLMSummarizer:
+    """基于 LLM 的语义摘要生成器
+
+    使用 ChatAnthropic (MiniMax API) 生成对话摘要，保留关键语义信息。
+    """
+
+    SUMMARIZE_PROMPT = """你是一个对话摘要助手。请将以下对话历史压缩成简洁的摘要。
+
+要求：
+1. 保留关键信息：用户的问题主题、重要决策、关键概念
+2. 摘要长度控制在 200 字以内
+3. 使用中文输出
+4. 按时间顺序组织信息
+
+对话历史：
+{conversation}
+
+请输出摘要："""
+
+    MERGE_PROMPT = """你是一个对话摘要助手。请将以下多条摘要合并成一条连贯的摘要。
+
+要求：
+1. 保留所有关键信息，去除重复内容
+2. 按时间顺序组织
+3. 摘要长度控制在 300 字以内
+4. 使用中文输出
+
+摘要列表：
+{summaries}
+
+请输出合并后的摘要："""
+
+    def __init__(self, model: str = None, api_key: str = None, base_url: str = None):
+        """初始化 LLM 摘要生成器
+
+        Args:
+            model: 模型名称，默认使用配置中的模型
+            api_key: API Key，默认使用配置中的 key
+            base_url: API Base URL，默认使用配置中的 URL
+        """
+        self._llm = None
+        self._model = model
+        self._api_key = api_key
+        self._base_url = base_url
+
+    def _get_llm(self):
+        """延迟加载 LLM"""
+        if self._llm is not None:
+            return self._llm
+
+        try:
+            from langchain_anthropic import ChatAnthropic
+            from .config import config
+
+            self._llm = ChatAnthropic(
+                model=self._model or config.anthropic_model or "MiniMax-M2.7",
+                api_key=self._api_key or config.anthropic_api_key,
+                base_url=self._base_url or config.anthropic_base_url,
+            )
+            return self._llm
+        except Exception as e:
+            print(f"[LLMSummarizer] Failed to load LLM: {e}")
+            return None
+
+    def summarize(self, messages: List["ChatMessage"]) -> str:
+        """生成对话摘要
+
+        Args:
+            messages: 对话消息列表
+
+        Returns:
+            摘要文本
+        """
+        llm = self._get_llm()
+        if not llm or not messages:
+            return ""
+
+        # 构建对话文本
+        conversation_parts = []
+        for msg in messages:
+            role_cn = "用户" if msg.role == "user" else "助手"
+            # 截断过长的单条消息
+            content = msg.content[:500] + "..." if len(msg.content) > 500 else msg.content
+            conversation_parts.append(f"{role_cn}: {content}")
+
+        conversation_text = "\n".join(conversation_parts)
+        prompt = self.SUMMARIZE_PROMPT.format(conversation=conversation_text)
+
+        try:
+            from langchain_core.messages import HumanMessage
+            response = llm.invoke([HumanMessage(content=prompt)])
+            return self._extract_text(response.content)
+        except Exception as e:
+            print(f"[LLMSummarizer] summarize failed: {e}")
+            return ""
+
+    def merge_summaries(self, summaries: List[str]) -> str:
+        """合并多条摘要
+
+        Args:
+            summaries: 摘要列表
+
+        Returns:
+            合并后的摘要
+        """
+        llm = self._get_llm()
+        if not llm or not summaries:
+            return "\n".join(summaries)
+
+        if len(summaries) == 1:
+            return summaries[0]
+
+        summaries_text = "\n\n---\n\n".join(
+            f"摘要{i+1}: {s}" for i, s in enumerate(summaries)
+        )
+        prompt = self.MERGE_PROMPT.format(summaries=summaries_text)
+
+        try:
+            from langchain_core.messages import HumanMessage
+            response = llm.invoke([HumanMessage(content=prompt)])
+            return self._extract_text(response.content)
+        except Exception as e:
+            print(f"[LLMSummarizer] merge failed: {e}")
+            return "\n".join(summaries)
+
+    @staticmethod
+    def _extract_text(content) -> str:
+        """从 LLM 响应中提取文本"""
+        if isinstance(content, str):
+            return content.strip()
+        elif isinstance(content, list):
+            if content:
+                first = content[0]
+                if isinstance(first, dict):
+                    return first.get("text", "").strip()
+                return getattr(first, "text", "").strip()
+        elif isinstance(content, dict):
+            return content.get("text", "").strip()
+        return str(content).strip()
 
 
 class AutoCompressPolicy:
@@ -156,6 +321,7 @@ class ConversationMemory:
         token_budget: int = DEFAULT_TOKEN_BUDGET,
         max_summary_history: int = MAX_SUMMARY_HISTORY,
         compression_callback: Optional[CompressionCallback] = None,
+        use_llm_summarizer: bool = False,
     ):
         """初始化对话历史管理器
 
@@ -167,6 +333,7 @@ class ConversationMemory:
             token_budget: Token 预算，用于智能截断
             max_summary_history: 最大保留的摘要历史条数
             compression_callback: 压缩完成后的回调函数
+            use_llm_summarizer: 是否使用 LLM 生成语义摘要（默认 False，使用模板摘要）
         """
         self.messages: List[ChatMessage] = []
         self.max_turns = max_turns
@@ -176,6 +343,10 @@ class ConversationMemory:
         self.token_budget = token_budget
         self.max_summary_history = max_summary_history
         self.compression_callback = compression_callback
+        self.use_llm_summarizer = use_llm_summarizer
+
+        # LLM 摘要生成器（延迟加载）
+        self._llm_summarizer: Optional[LLMSummarizer] = None
 
         # 摘要历史 - 存储被压缩的旧消息摘要
         self._summary_history: List[MessageSummary] = []
@@ -184,6 +355,12 @@ class ConversationMemory:
         self.compression_count: int = 0
         self.compressed_tokens: int = 0
         self.original_message_count: int = 0
+
+    def _get_llm_summarizer(self) -> Optional[LLMSummarizer]:
+        """延迟加载 LLM 摘要生成器"""
+        if self._llm_summarizer is None and self.use_llm_summarizer:
+            self._llm_summarizer = LLMSummarizer()
+        return self._llm_summarizer
 
     def _should_compress(self) -> bool:
         """检查是否应该压缩
@@ -262,9 +439,15 @@ class ConversationMemory:
         if not old_messages:
             return retained_messages, ""
 
-        # 生成摘要
+        # 生成摘要：优先使用自定义函数，其次 LLM，最后模板
         if self.summarizer_fn:
             summary_text = self.summarizer_fn(old_messages)
+        elif self.use_llm_summarizer:
+            llm_summarizer = self._get_llm_summarizer()
+            if llm_summarizer:
+                summary_text = llm_summarizer.summarize(old_messages)
+            else:
+                summary_text = self._default_summarize(old_messages)
         else:
             summary_text = self._default_summarize(old_messages)
 
@@ -273,53 +456,54 @@ class ConversationMemory:
     def _default_summarize(self, messages: List[ChatMessage]) -> str:
         """默认摘要生成（模板方式，不依赖 LLM）
 
-        改进：保留语义完整性，提取关键问题和答案对
+        改进：按 Q&A 对组织，保留语义完整性，token-aware 截断
         """
         if not messages:
             return ""
 
-        # 提取关键信息
-        user_msgs = [(i, m) for i, m in enumerate(messages) if m.role == "user"]
-        assistant_msgs = [(i, m) for i, m in enumerate(messages) if m.role == "assistant"]
+        # 按 Q&A 对组织消息
+        pairs = []
+        i = 0
+        while i < len(messages):
+            if messages[i].role == "user":
+                user_msg = messages[i].content
+                assistant_msg = ""
+                if i + 1 < len(messages) and messages[i + 1].role == "assistant":
+                    assistant_msg = messages[i + 1].content
+                    i += 2
+                else:
+                    i += 1
+                pairs.append((user_msg, assistant_msg))
+            else:
+                # 孤立的 assistant 消息
+                pairs.append(("", messages[i].content))
+                i += 1
 
-        summary_parts = []
+        if not pairs:
+            return ""
 
-        # 统计信息
-        if len(user_msgs) > 0:
-            summary_parts.append(f"用户共提问 {len(user_msgs)} 个问题")
-        if len(assistant_msgs) > 0:
-            summary_parts.append(f"助手回复 {len(assistant_msgs)} 次")
+        # Token 预算：摘要总长度不超过 token_budget 的 30%
+        summary_budget = int(self.token_budget * 0.3)
+        # 每个 Q&A 对的预算
+        per_pair_budget = max(80, summary_budget // max(len(pairs), 1))
 
-        # 保留关键问题和回答（首尾 + 中间抽样）
-        key_pairs = []
+        summary_parts = [f"共{len(pairs)}轮对话"]
 
-        # 首轮完整内容（最重要）
-        if user_msgs and assistant_msgs:
-            first_user = user_msgs[0][1].content
-            first_assistant = assistant_msgs[0][1].content
-            # 截断但保留核心
-            first_user_snippet = first_user[:100] + "..." if len(first_user) > 100 else first_user
-            first_assistant_snippet = first_assistant[:100] + "..." if len(first_assistant) > 100 else first_assistant
-            key_pairs.append(f"首问：{first_user_snippet}")
-            key_pairs.append(f"首答：{first_assistant_snippet}")
+        for idx, (q, a) in enumerate(pairs):
+            # 截断问题和回答
+            q_snippet = self._truncate_text_by_token(q, per_pair_budget // 2)
+            a_snippet = self._truncate_text_by_token(a, per_pair_budget // 2) if a else ""
 
-        # 最后一轮（最近的上下文）
-        if len(user_msgs) > 1 and len(assistant_msgs) > 1:
-            last_user = user_msgs[-1][1].content
-            last_assistant = assistant_msgs[-1][1].content
-            last_user_snippet = last_user[:80] + "..." if len(last_user) > 80 else last_user
-            last_assistant_snippet = last_assistant[:80] + "..." if len(last_assistant) > 80 else last_assistant
-            key_pairs.append(f"近问：{last_user_snippet}")
-            key_pairs.append(f"近答：{last_assistant_snippet}")
+            pair_text = f"Q: {q_snippet}"
+            if a_snippet:
+                pair_text += f" → A: {a_snippet}"
 
-        # 中间轮次抽样（如果对话较长）
-        if len(user_msgs) > 3:
-            mid_idx = len(user_msgs) // 2
-            mid_user = user_msgs[mid_idx][1].content
-            mid_user_snippet = mid_user[:60] + "..." if len(mid_user) > 60 else mid_user
-            key_pairs.append(f"中问：{mid_user_snippet}")
-
-        summary_parts.extend(key_pairs)
+            # 检查总预算
+            candidate = "；".join(summary_parts + [pair_text])
+            if estimate_tokens(candidate) > summary_budget:
+                summary_parts.append(f"...还有{len(pairs) - idx}轮")
+                break
+            summary_parts.append(pair_text)
 
         return "；".join(summary_parts)
 
@@ -367,6 +551,11 @@ class ConversationMemory:
     def get_history_text(self) -> str:
         """获取格式化的对话历史文本
 
+        优先级：最近消息 > 历史摘要
+        1. 先放入最近消息（从最新到最旧），保证当前上下文完整
+        2. 剩余预算用历史摘要填充
+        3. 摘要放在消息前面，保持时间顺序
+
         Returns:
             格式化的历史字符串，格式：
             用户: xxx
@@ -377,98 +566,98 @@ class ConversationMemory:
             return "（无历史对话）"
 
         budget = self.token_budget * 0.8
-        result_parts = []
-        result_tokens = 0
 
-        # 添加摘要历史
-        if self.use_summarization and self._summary_history:
-            for s in self._summary_history:
-                summary_text = "【对话摘要】" + s.content
-                summary_tokens = estimate_tokens(summary_text)
-                if result_tokens + summary_tokens <= budget:
-                    result_parts.append(summary_text)
-                    result_tokens += summary_tokens
+        # ===== 第一步：收集最近消息（从最新到最旧） =====
+        msg_parts = []
+        msg_tokens = 0
 
-        # 添加消息
-        for msg in self.messages:
+        for msg in reversed(self.messages):
             role_cn = "用户" if msg.role == "user" else "助手"
             msg_text = f"{role_cn}: {msg.content}"
-            msg_tokens = estimate_tokens(msg_text)
-            if result_tokens + msg_tokens <= budget:
-                result_parts.append(msg_text)
-                result_tokens += msg_tokens
+            t = estimate_tokens(msg_text)
+            if msg_tokens + t <= budget:
+                msg_parts.insert(0, msg_text)
+                msg_tokens += t
             else:
                 break
 
+        # ===== 第二步：剩余预算填充摘要 =====
+        summary_parts = []
+        summary_tokens = 0
+        remaining = budget - msg_tokens
+
+        if self.use_summarization and self._summary_history and remaining > 0:
+            for s in reversed(self._summary_history):
+                part = "【对话摘要】" + s.content
+                t = estimate_tokens(part)
+                if summary_tokens + t <= remaining:
+                    summary_parts.insert(0, part)
+                    summary_tokens += t
+                elif summary_tokens == 0:
+                    truncated = self._truncate_text_by_token(part, remaining)
+                    if truncated:
+                        summary_parts.insert(0, truncated)
+                    break
+                else:
+                    break
+
+        # ===== 第三步：拼接（摘要在前，消息在后） =====
+        result_parts = summary_parts + msg_parts
         return "\n".join(result_parts) if result_parts else "（无历史对话）"
 
     def get_history_for_rag(self) -> str:
         """获取适合 RAG 使用的对话历史
 
-        智能策略：
-        1. 优先使用摘要（摘要是压缩后的核心信息）
-        2. 如果摘要太大，逐步截断摘要直到能放入预算
-        3. 如果没有摘要或摘要为空，使用最新消息
+        优先级：最近消息 > 历史摘要
+        1. 先放入最近消息（从最新到最旧），保证当前上下文完整
+        2. 剩余预算用历史摘要填充
+        3. 摘要放在消息前面，保持时间顺序
         """
         if not self.messages and not self._summary_history:
             return ""
 
         budget = self.token_budget * 0.8
-        result_parts = []
-        result_tokens = 0
 
-        # 如果有摘要，优先使用摘要
-        if self.use_summarization and self._summary_history:
-            summary_parts = []
-            for s in self._summary_history:
-                summary_parts.append("【历史摘要】" + s.content)
+        # ===== 第一步：收集最近消息（从最新到最旧） =====
+        recent_messages = self.messages[-(self.max_turns * 2):]
+        msg_parts = []
+        msg_tokens = 0
 
-            # 尝试包含所有摘要
-            for part in summary_parts:
-                part_tokens = estimate_tokens(part)
-                if result_tokens + part_tokens <= budget:
-                    result_parts.append(part)
-                    result_tokens += part_tokens
-                elif result_tokens == 0:
-                    # 摘要太大，截断它
-                    truncated = self._truncate_text_by_token(part, budget)
+        for msg in reversed(recent_messages):
+            role_cn = "用户" if msg.role == "user" else "助手"
+            msg_text = role_cn + ": " + msg.content
+            t = estimate_tokens(msg_text)
+            if msg_tokens + t <= budget:
+                msg_parts.insert(0, msg_text)
+                msg_tokens += t
+            else:
+                break
+
+        # ===== 第二步：剩余预算填充摘要 =====
+        summary_parts = []
+        summary_tokens = 0
+        remaining = budget - msg_tokens
+
+        if self.use_summarization and self._summary_history and remaining > 0:
+            # 从最新摘要到最旧，优先保留最近的摘要
+            for s in reversed(self._summary_history):
+                part = "【历史摘要】" + s.content
+                t = estimate_tokens(part)
+                if summary_tokens + t <= remaining:
+                    summary_parts.insert(0, part)
+                    summary_tokens += t
+                elif summary_tokens == 0:
+                    # 第一条摘要就超预算，截断它
+                    truncated = self._truncate_text_by_token(part, remaining)
                     if truncated:
-                        result_parts.append(truncated)
-                        result_tokens = estimate_tokens(truncated)
+                        summary_parts.insert(0, truncated)
+                        summary_tokens = estimate_tokens(truncated)
                     break
                 else:
                     break
 
-            # 如果已经放入了一些内容，检查是否可以添加消息
-            if result_tokens > 0:
-                remaining_budget = budget - result_tokens
-                # 限制只取最近 max_turns 轮的消息
-                recent_messages = self.messages[-(self.max_turns * 2):]
-                for msg in recent_messages:
-                    role_cn = "用户" if msg.role == "user" else "助手"
-                    msg_text = role_cn + ": " + msg.content
-                    msg_tokens = estimate_tokens(msg_text)
-                    if msg_tokens <= remaining_budget:
-                        result_parts.append(msg_text)
-                        result_tokens += msg_tokens
-                        remaining_budget -= msg_tokens
-                    else:
-                        break
-
-            return "\n".join(result_parts) if result_parts else ""
-
-        # 没有摘要时，直接使用消息（限制为最近 max_turns 轮）
-        recent_messages = self.messages[-(self.max_turns * 2):]
-        for msg in recent_messages:
-            role_cn = "用户" if msg.role == "user" else "助手"
-            msg_text = role_cn + ": " + msg.content
-            msg_tokens = estimate_tokens(msg_text)
-            if result_tokens + msg_tokens <= budget:
-                result_parts.append(msg_text)
-                result_tokens += msg_tokens
-            else:
-                break
-
+        # ===== 第三步：拼接（摘要在前，消息在后） =====
+        result_parts = summary_parts + msg_parts
         return "\n".join(result_parts) if result_parts else ""
 
     def _truncate_text_by_token(self, text: str, max_tokens: int) -> str:
@@ -562,9 +751,8 @@ class ConversationMemory:
             )
             self._summary_history.append(summary)
 
-            # 限制摘要历史数量
-            while len(self._summary_history) > self.max_summary_history:
-                self._summary_history.pop(0)
+            # 摘要历史过多时，合并旧摘要而非直接丢弃
+            self._merge_old_summaries()
 
         # 保留消息
         self.messages = retained_messages
@@ -575,6 +763,48 @@ class ConversationMemory:
 
         # 只有实际发生了压缩才返回 True
         return bool(old_messages and summary_content)
+
+    def _merge_old_summaries(self):
+        """合并旧摘要，而非 FIFO 丢弃
+
+        当摘要数量超过 max_summary_history 时，将最旧的一半摘要合并成一条。
+        """
+        if len(self._summary_history) <= self.max_summary_history:
+            return
+
+        # 计算需要合并的数量：合并最旧的一半
+        merge_count = len(self._summary_history) - self.max_summary_history + 1
+        if merge_count < 2:
+            merge_count = 2
+
+        # 取出要合并的旧摘要
+        old_summaries = self._summary_history[:merge_count]
+        remaining = self._summary_history[merge_count:]
+
+        # 合并摘要内容
+        summary_texts = [s.content for s in old_summaries]
+
+        # 优先使用 LLM 合并
+        llm_summarizer = self._get_llm_summarizer()
+        if llm_summarizer:
+            merged_content = llm_summarizer.merge_summaries(summary_texts)
+        else:
+            # 回退：简单拼接
+            merged_content = " | ".join(summary_texts)
+            # 截断过长的合并结果
+            if len(merged_content) > 500:
+                merged_content = merged_content[:500] + "..."
+
+        # 创建合并后的摘要
+        merged_summary = MessageSummary(
+            content=merged_content,
+            original_count=sum(s.original_count for s in old_summaries),
+            first_msg_time=old_summaries[0].first_msg_time,
+            last_msg_time=old_summaries[-1].last_msg_time,
+        )
+
+        # 替换旧摘要
+        self._summary_history = [merged_summary] + remaining
 
     def clear(self, clear_stats: bool = False) -> None:
         """清空对话历史
@@ -684,6 +914,7 @@ class MultiAgentContext:
         use_summarization: bool = True,
         max_summary_history: int = ConversationMemory.MAX_SUMMARY_HISTORY,
         compression_callback: Optional[CompressionCallback] = None,
+        use_llm_summarizer: bool = False,
     ):
         self.memory = ConversationMemory(
             max_turns=max_turns,
@@ -691,6 +922,7 @@ class MultiAgentContext:
             use_summarization=use_summarization,
             max_summary_history=max_summary_history,
             compression_callback=compression_callback,
+            use_llm_summarizer=use_llm_summarizer,
         )
         self.agent_contexts: dict[str, AgentContext] = {}
         self.task_results: dict[str, dict] = {}

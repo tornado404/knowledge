@@ -91,7 +91,7 @@ class ChatCompletionResponse(BaseModel):
 
 # In-memory session store with ConversationMemory
 class SessionStore:
-    """In-memory session store with ConversationMemory.
+    """Session store with ConversationMemory and optional persistence.
 
     支持上下文压缩:
     - max_turns: 最大保存的对话轮数（默认10）
@@ -99,6 +99,7 @@ class SessionStore:
     - use_summarization: 是否使用摘要压缩（默认True）
     - max_summary_history: 最大摘要历史条数（默认10）
     - auto_compress_policy: 自动压缩策略（默认 ON_EVERY_ADD）
+    - persistence: 持久化管理器（可选）
     """
 
     def __init__(
@@ -109,6 +110,8 @@ class SessionStore:
         token_budget: int = 3000,
         max_summary_history: int = 10,
         auto_compress_policy: str = "on_every_add",
+        use_llm_summarizer: bool = False,
+        persistence=None,
     ):
         from .memory import AutoCompressPolicy
 
@@ -119,16 +122,27 @@ class SessionStore:
         self.token_budget = token_budget
         self.max_summary_history = max_summary_history
         self.auto_compress_policy = AutoCompressPolicy.from_string(auto_compress_policy)
+        self.use_llm_summarizer = use_llm_summarizer
+        self.persistence = persistence
 
     def get_memory(self, session_id: str) -> ConversationMemory:
         """Get or create a ConversationMemory for a session."""
         if session_id not in self.sessions:
+            # 尝试从持久化存储加载
+            if self.persistence:
+                memory = self.persistence.load_session(session_id)
+                if memory:
+                    self.sessions[session_id] = memory
+                    return memory
+
+            # 创建新的 memory
             self.sessions[session_id] = ConversationMemory(
                 max_turns=self.max_turns,
                 compression_threshold=self.compression_threshold,
                 use_summarization=self.use_summarization,
                 token_budget=self.token_budget,
                 max_summary_history=self.max_summary_history,
+                use_llm_summarizer=self.use_llm_summarizer,
             )
         return self.sessions[session_id]
 
@@ -162,6 +176,10 @@ class SessionStore:
             if memory._should_compress():
                 memory.compress()
 
+        # 自动保存（如果启用持久化）
+        if self.persistence and self.persistence.auto_save:
+            self.persistence.save_session(session_id, memory)
+
     def compress_session(self, session_id: str) -> bool:
         """手动触发会话压缩
 
@@ -169,20 +187,39 @@ class SessionStore:
             是否实际执行了压缩
         """
         memory = self.get_memory(session_id)
-        return memory.compress()
+        result = memory.compress()
+
+        # 压缩后保存
+        if result and self.persistence:
+            self.persistence.save_session(session_id, memory)
+
+        return result
 
     def clear_session(self, session_id: str):
         """Clear session history."""
         if session_id in self.sessions:
             del self.sessions[session_id]
 
+        # 同时删除持久化文件
+        if self.persistence:
+            self.persistence.delete_session(session_id)
+
     def has_session(self, session_id: str) -> bool:
         """Check if session exists."""
-        return session_id in self.sessions
+        if session_id in self.sessions:
+            return True
+        # 检查持久化存储
+        if self.persistence:
+            return self.persistence._get_session_path(session_id).exists()
+        return False
 
     def list_sessions(self) -> List[str]:
         """List all session IDs."""
-        return list(self.sessions.keys())
+        session_ids = set(self.sessions.keys())
+        # 合并持久化存储中的 session
+        if self.persistence:
+            session_ids.update(self.persistence.list_sessions())
+        return list(session_ids)
 
     def get_compression_stats(self, session_id: str) -> dict:
         """Get compression stats for a session."""
@@ -190,8 +227,25 @@ class SessionStore:
         return memory.get_compression_stats()
 
 
-# Global instance
-session_store = SessionStore()
+# Global instance - use config to determine LLM summarizer and persistence
+from knowledge_vector.config import config as _config
+
+# 初始化持久化管理器（默认启用，存储到 ./sessions 目录）
+_persistence = None
+if _config.session_persistence:
+    from .session_persistence import SessionPersistence
+    _persistence = SessionPersistence(
+        storage_dir=_config.session_storage_dir,
+        auto_save=True,
+        max_age_days=_config.session_max_age_days,
+    )
+    # 启动时清理过期 session
+    _persistence.cleanup_expired()
+
+session_store = SessionStore(
+    use_llm_summarizer=_config.use_llm_summarizer,
+    persistence=_persistence,
+)
 
 app = FastAPI(
     title="Knowledge RAG Chat API",
@@ -361,12 +415,12 @@ def extract_history_from_messages(messages: List[Message]) -> tuple[str, List[di
     return user_question, history
 
 
-async def stream_answer(question: str, history: List[dict], model: str) -> AsyncGenerator[str, None]:
+async def stream_answer(question: str, history: List[dict], model: str, summary_context: str = "") -> AsyncGenerator[str, None]:
     """SSE 流式生成回答"""
     chunk_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
     created = int(datetime.now().timestamp())
 
-    async for answer_chunk in stream_invoke_agent(question, history):
+    async for answer_chunk in stream_invoke_agent(question, history, summary_context=summary_context):
         chunk = {
             "id": chunk_id,
             "object": "chat.completion.chunk",
@@ -392,6 +446,8 @@ async def chat_completions(request: ChatCompletionRequest):
     - 非流式响应 (stream: false)
     - 流式 SSE 响应 (stream: true)
     - 多轮对话历史传递
+    - 自动压缩上下文注入
+    - 自动 session 压缩（当提供 session_id 时）
     """
     try:
         # 提取历史和最新用户问题
@@ -400,10 +456,37 @@ async def chat_completions(request: ChatCompletionRequest):
         if not user_question:
             raise HTTPException(status_code=400, detail="No user message found")
 
+        # 从 session 获取压缩后的历史摘要，并记录用户消息
+        summary_context = ""
+        sid = request.session_id
+        if sid:
+            session_store.add_message(sid, "user", user_question)
+            memory = session_store.get_memory(sid)
+            summary_context = memory.get_summary_context()
+
         if request.stream:
-            # 流式响应
+            # 流式响应 - 需要收集完整回答以记录到 session
+            async def stream_and_record():
+                full_answer = ""
+                async for chunk in stream_answer(user_question, history, request.model, summary_context=summary_context):
+                    # 解析 chunk 获取内容
+                    if chunk.startswith("data: ") and chunk != "data: [DONE]\n\n":
+                        try:
+                            data = json.loads(chunk[6:].strip())
+                            if "choices" in data and data["choices"]:
+                                delta = data["choices"][0].get("delta", {})
+                                content = delta.get("content", "")
+                                full_answer += content
+                        except:
+                            pass
+                    yield chunk
+
+                # 记录完整回答到 session
+                if sid and full_answer:
+                    session_store.add_message(sid, "assistant", full_answer)
+
             return StreamingResponse(
-                stream_answer(user_question, history, request.model),
+                stream_and_record(),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -413,7 +496,11 @@ async def chat_completions(request: ChatCompletionRequest):
             )
         else:
             # 非流式响应
-            answer = invoke_agent(user_question, history)
+            answer = invoke_agent(user_question, history, summary_context=summary_context)
+
+            # 记录回答到 session
+            if sid:
+                session_store.add_message(sid, "assistant", answer)
 
             return ChatCompletionResponse(
                 id=f"chatcmpl-{uuid.uuid4().hex[:8]}",
