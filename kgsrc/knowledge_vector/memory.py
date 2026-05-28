@@ -450,15 +450,13 @@ class ConversationMemory:
                 if retained_tokens + msg_tokens <= recent_budget:
                     retained_messages.insert(0, msg)
                     retained_tokens += msg_tokens
-                else:
-                    # 这条消息太长了，但仍要尝试保留一部分
-                    if retained_tokens == 0:
-                        # 还没保留任何消息，强制保留这条消息的摘要版本
-                        truncated = self._truncate_text_by_token(msg.content, recent_budget)
-                        if truncated:
-                            retained_messages.insert(0, ChatMessage(role=msg.role, content=truncated))
-                            retained_tokens = estimate_tokens(truncated)
-                    break
+                elif retained_tokens == 0:
+                    # 第一条消息就超出预算，强制截断保留
+                    truncated = self._truncate_text_by_token(msg.content, recent_budget)
+                    if truncated:
+                        retained_messages.insert(0, ChatMessage(role=msg.role, content=truncated))
+                        retained_tokens = estimate_tokens(truncated)
+                # else: 消息太长且已有一些保留的消息，跳过这条，继续尝试更早的消息
 
             # 边界情况：如果最终没有保留任何消息，保留最后一条
             if not retained_messages:
@@ -661,7 +659,8 @@ class ConversationMemory:
         if not self.messages and not self._summary_history:
             return ""
 
-        budget = self.token_budget * 0.8
+        # 使用 60% 预算给最近消息，20% 给摘要，20% 缓冲
+        msg_budget = int(self.token_budget * 0.6)
 
         # ===== 第一步：收集最近消息（从最新到最旧） =====
         recent_messages = self.messages[-(self.max_turns * 2):]
@@ -672,16 +671,21 @@ class ConversationMemory:
             role_cn = "用户" if msg.role == "user" else "助手"
             msg_text = role_cn + ": " + msg.content
             t = estimate_tokens(msg_text)
-            if msg_tokens + t <= budget:
+            if msg_tokens + t <= msg_budget:
                 msg_parts.insert(0, msg_text)
                 msg_tokens += t
-            else:
-                break
+            elif msg_tokens == 0:
+                # 第一条消息就超预算，截断保留
+                truncated = self._truncate_text_by_token(msg.content, msg_budget)
+                if truncated:
+                    msg_parts.insert(0, role_cn + ": " + truncated)
+                    msg_tokens = estimate_tokens(msg_parts[0])
+            # else: 超预算且已有保留消息，跳过
 
         # ===== 第二步：剩余预算填充摘要 =====
         summary_parts = []
         summary_tokens = 0
-        remaining = budget - msg_tokens
+        remaining = self.token_budget - msg_tokens
 
         if self.use_summarization and self._summary_history and remaining > 0:
             # 从最新摘要到最旧，优先保留最近的摘要
@@ -836,9 +840,11 @@ class ConversationMemory:
         else:
             # 回退：简单拼接
             merged_content = " | ".join(summary_texts)
-            # 截断过长的合并结果
-            if len(merged_content) > 500:
-                merged_content = merged_content[:500] + "..."
+
+        # 截断过长的合并结果（使用 token 预算，保持一致性）
+        merged_budget = int(self.token_budget * 0.25)  # 合并后摘要不超过 25% token 预算
+        if estimate_tokens(merged_content) > merged_budget:
+            merged_content = self._truncate_text_by_token(merged_content, merged_budget)
 
         # 创建合并后的摘要
         merged_summary = MessageSummary(
