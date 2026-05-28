@@ -356,6 +356,9 @@ class ConversationMemory:
         self.compressed_tokens: int = 0
         self.original_message_count: int = 0
 
+        # 压缩质量跟踪
+        self._last_compression_quality: float = 0.0
+
     def _get_llm_summarizer(self) -> Optional[LLMSummarizer]:
         """延迟加载 LLM 摘要生成器"""
         if self._llm_summarizer is None and self.use_llm_summarizer:
@@ -366,27 +369,48 @@ class ConversationMemory:
         """检查是否应该压缩
 
         触发条件（满足任一即可）：
-        1. Token 预算超限：当前消息总 token 超过 token_budget * 0.8
-        2. 消息数量超限：消息数超过 (max_turns + compression_threshold) * 2
+        1. Token 预算超限：当前消息总 token 超过 token_budget * 0.7（70%预警，100%触发）
+        2. 消息数量超限：消息数超过 max_turns * 2 + compression_threshold
+
+        Returns:
+            是否应该触发压缩
         """
         # 只在一轮对话结束后检查（消息数为偶数）
         if len(self.messages) % 2 != 0:
             return False
 
-        # 检查 token 预算
-        total_text = "\n".join(m.content for m in self.messages)
-        total_tokens = estimate_tokens(total_text)
-        if total_tokens > self.token_budget * 0.8:
-            return True
-
         # 检查消息数量
-        max_messages = (self.max_turns + self.compression_threshold) * 2
+        max_messages = self.max_turns * 2 + self.compression_threshold
         if len(self.messages) <= max_messages:
             return False
 
-        # 检查是否有足够的旧消息值得压缩
+        # 检查是否有足够的旧消息值得压缩（至少2条）
         compressible = len(self.messages) - (self.max_turns * 2)
-        return compressible >= 2
+        if compressible < 2:
+            return False
+
+        # 检查 token 预算（使用更激进的 70% 阈值提前压缩）
+        total_text = "\n".join(m.content for m in self.messages)
+        total_tokens = estimate_tokens(total_text)
+        threshold = self.token_budget * 0.7
+
+        return total_tokens > threshold
+
+    def should_compress_warning(self) -> Tuple[bool, float]:
+        """检查是否即将达到压缩阈值（用于预警）
+
+        Returns:
+            (should_warn, usage_ratio) - 是否应该预警，以及当前使用率
+        """
+        if len(self.messages) % 2 != 0:
+            return False, 0.0
+
+        total_text = "\n".join(m.content for m in self.messages)
+        total_tokens = estimate_tokens(total_text)
+        usage_ratio = total_tokens / self.token_budget
+
+        # 超过 50% 时预警
+        return usage_ratio > 0.5, usage_ratio
 
     def _compress_via_truncation(self) -> List[ChatMessage]:
         """通过截断获取压缩后的消息（保留最近 max_turns 轮）"""
@@ -405,11 +429,15 @@ class ConversationMemory:
             (recent_messages, summary_text) - 保留的消息和历史摘要
         """
         recent_count = self.max_turns * 2
-        budget = self.token_budget * 0.8  # 保留 20% 空间给摘要
+        # 保留 20% 空间给摘要，60% 给最近消息，20% 作为缓冲
+        recent_budget = int(self.token_budget * 0.6)
 
         # 如果消息数未超限，直接返回
         if len(self.messages) < recent_count:
             return self.messages, ""
+
+        # 估算被压缩内容的 token 数（用于质量评估）
+        old_messages_total_tokens = 0
 
         if incremental:
             # 增量压缩：只压缩超出 budget 的部分
@@ -419,13 +447,20 @@ class ConversationMemory:
             # 从最新消息开始，优先保留
             for msg in reversed(self.messages):
                 msg_tokens = estimate_tokens(msg.content)
-                if retained_tokens + msg_tokens <= budget:
+                if retained_tokens + msg_tokens <= recent_budget:
                     retained_messages.insert(0, msg)
                     retained_tokens += msg_tokens
                 else:
+                    # 这条消息太长了，但仍要尝试保留一部分
+                    if retained_tokens == 0:
+                        # 还没保留任何消息，强制保留这条消息的摘要版本
+                        truncated = self._truncate_text_by_token(msg.content, recent_budget)
+                        if truncated:
+                            retained_messages.insert(0, ChatMessage(role=msg.role, content=truncated))
+                            retained_tokens = estimate_tokens(truncated)
                     break
 
-            # 如果保留的消息为空，只保留最后一条
+            # 边界情况：如果最终没有保留任何消息，保留最后一条
             if not retained_messages:
                 retained_messages = [self.messages[-1]]
         else:
@@ -439,6 +474,9 @@ class ConversationMemory:
         if not old_messages:
             return retained_messages, ""
 
+        # 计算被压缩内容的 token 数（用于质量评估）
+        old_messages_total_tokens = sum(estimate_tokens(m.content) for m in old_messages)
+
         # 生成摘要：优先使用自定义函数，其次 LLM，最后模板
         if self.summarizer_fn:
             summary_text = self.summarizer_fn(old_messages)
@@ -450,6 +488,13 @@ class ConversationMemory:
                 summary_text = self._default_summarize(old_messages)
         else:
             summary_text = self._default_summarize(old_messages)
+
+        # 计算压缩质量：摘要 token / 原始 token，值越低说明压缩率越高
+        if old_messages_total_tokens > 0 and summary_text:
+            summary_tokens = estimate_tokens(summary_text)
+            self._last_compression_quality = summary_tokens / old_messages_total_tokens
+        else:
+            self._last_compression_quality = 0.0
 
         return retained_messages, summary_text
 
@@ -814,6 +859,7 @@ class ConversationMemory:
         """
         self.messages = []
         self._summary_history = []
+        self._last_compression_quality = 0.0
         if clear_stats:
             self.compression_count = 0
             self.compressed_tokens = 0
@@ -840,6 +886,11 @@ class ConversationMemory:
         Returns:
             包含压缩统计的字典
         """
+        # 计算当前 token 使用情况
+        total_text = "\n".join(m.content for m in self.messages)
+        current_tokens = estimate_tokens(total_text)
+        usage_ratio = current_tokens / self.token_budget if self.token_budget > 0 else 0
+
         return {
             "compression_count": self.compression_count,
             "compressed_tokens": self.compressed_tokens,
@@ -850,7 +901,22 @@ class ConversationMemory:
                 f"{self.compressed_tokens / max(1, self.original_message_count):.1f} tokens/msg"
                 if self.original_message_count > 0 else "N/A"
             ),
+            "current_tokens": current_tokens,
+            "token_budget": self.token_budget,
+            "token_usage_ratio": f"{usage_ratio * 100:.1f}%",
+            "last_compression_quality": (
+                f"{self._last_compression_quality * 100:.1f}%"
+                if self._last_compression_quality > 0 else "N/A"
+            ),
         }
+
+    def get_compression_quality(self) -> float:
+        """获取最近一次压缩的质量指标
+
+        Returns:
+            压缩质量比率（摘要token/原始token），越低说明压缩效果越好
+        """
+        return self._last_compression_quality
 
     @property
     def is_empty(self) -> bool:
