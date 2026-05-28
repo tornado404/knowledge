@@ -70,6 +70,7 @@ class SessionPersistence:
                     "use_summarization": memory.use_summarization,
                     "token_budget": memory.token_budget,
                     "max_summary_history": memory.max_summary_history,
+                    "compression_ratio": getattr(memory, "compression_ratio", 0.7),
                 },
                 "messages": [
                     {
@@ -142,6 +143,7 @@ class SessionPersistence:
                 use_summarization=config.get("use_summarization", True),
                 token_budget=config.get("token_budget", 3000),
                 max_summary_history=config.get("max_summary_history", 10),
+                compression_ratio=config.get("compression_ratio", 0.7),
             )
 
             # 恢复消息
