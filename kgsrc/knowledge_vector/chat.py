@@ -111,6 +111,7 @@ class SessionStore:
         max_summary_history: int = 10,
         auto_compress_policy: str = "on_every_add",
         use_llm_summarizer: bool = False,
+        compression_ratio: float = 0.7,
         persistence=None,
     ):
         from .memory import AutoCompressPolicy
@@ -123,6 +124,7 @@ class SessionStore:
         self.max_summary_history = max_summary_history
         self.auto_compress_policy = AutoCompressPolicy.from_string(auto_compress_policy)
         self.use_llm_summarizer = use_llm_summarizer
+        self.compression_ratio = compression_ratio
         self.persistence = persistence
 
     def get_memory(self, session_id: str) -> ConversationMemory:
@@ -143,6 +145,7 @@ class SessionStore:
                 token_budget=self.token_budget,
                 max_summary_history=self.max_summary_history,
                 use_llm_summarizer=self.use_llm_summarizer,
+                compression_ratio=self.compression_ratio,
             )
         return self.sessions[session_id]
 
