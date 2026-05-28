@@ -336,6 +336,7 @@ class ConversationMemory:
         max_summary_history: int = MAX_SUMMARY_HISTORY,
         compression_callback: Optional[CompressionCallback] = None,
         use_llm_summarizer: bool = False,
+        compression_ratio: float = 0.7,
     ):
         """初始化对话历史管理器
 
@@ -348,6 +349,7 @@ class ConversationMemory:
             max_summary_history: 最大保留的摘要历史条数
             compression_callback: 压缩完成后的回调函数
             use_llm_summarizer: 是否使用 LLM 生成语义摘要（默认 False，使用模板摘要）
+            compression_ratio: 压缩触发比率（默认 0.7，即 70% 时触发）
         """
         self.messages: List[ChatMessage] = []
         self.max_turns = max_turns
@@ -355,6 +357,7 @@ class ConversationMemory:
         self.use_summarization = use_summarization
         self.summarizer_fn = summarizer_fn
         self.token_budget = token_budget
+        self.compression_ratio = compression_ratio  # 压缩触发比率
         self.max_summary_history = max_summary_history
         self.compression_callback = compression_callback
         self.use_llm_summarizer = use_llm_summarizer
@@ -403,10 +406,10 @@ class ConversationMemory:
         if compressible < 2:
             return False
 
-        # 检查 token 预算（使用更激进的 70% 阈值提前压缩）
+        # 检查 token 预算（使用配置的 compression_ratio 阈值）
         total_text = "\n".join(m.content for m in self.messages)
         total_tokens = estimate_tokens(total_text)
-        threshold = self.token_budget * 0.7
+        threshold = self.token_budget * self.compression_ratio
 
         return total_tokens > threshold
 
@@ -423,8 +426,9 @@ class ConversationMemory:
         total_tokens = estimate_tokens(total_text)
         usage_ratio = total_tokens / self.token_budget
 
-        # 超过 50% 时预警
-        return usage_ratio > 0.5, usage_ratio
+        # 预警阈值是压缩触发的 70%（即 50% 当 compression_ratio=0.7）
+        warning_threshold = self.compression_ratio * 0.7
+        return usage_ratio > warning_threshold, usage_ratio
 
     def _compress_via_truncation(self) -> List[ChatMessage]:
         """通过截断获取压缩后的消息（保留最近 max_turns 轮）"""
@@ -476,8 +480,23 @@ class ConversationMemory:
             if not retained_messages:
                 retained_messages = [self.messages[-1]]
         else:
-            # 全量压缩：保留最近的 recent_count 条消息
-            retained_messages = self.messages[-recent_count:]
+            # 全量压缩：保留最近的 recent_count 条消息，但也要尊重 token 预算
+            retained_messages = []
+            retained_tokens = 0
+
+            # 从最新消息开始，优先保留
+            for msg in reversed(self.messages[-recent_count:]):
+                msg_tokens = estimate_tokens(msg.content)
+                if retained_tokens + msg_tokens <= recent_budget:
+                    retained_messages.insert(0, msg)
+                    retained_tokens += msg_tokens
+                elif retained_tokens == 0:
+                    # 第一条消息就超出预算，强制截断保留
+                    truncated = self._truncate_text_by_token(msg.content, recent_budget)
+                    if truncated:
+                        retained_messages.insert(0, ChatMessage(role=msg.role, content=truncated))
+                        retained_tokens = estimate_tokens(truncated)
+                # else: 消息太长且已有一些保留的消息，跳过
 
         # 对被裁剪的旧消息进行摘要（摘要生成由 compress() 统一处理）
         retained_ids = {id(m) for m in retained_messages}
@@ -1025,6 +1044,7 @@ class MultiAgentContext:
     - use_summarization: 是否使用摘要压缩
     - max_summary_history: 最大摘要历史条数
     - compression_callback: 压缩回调
+    - compression_ratio: 压缩触发比率
     """
 
     def __init__(
@@ -1035,6 +1055,7 @@ class MultiAgentContext:
         max_summary_history: int = ConversationMemory.MAX_SUMMARY_HISTORY,
         compression_callback: Optional[CompressionCallback] = None,
         use_llm_summarizer: bool = False,
+        compression_ratio: float = 0.7,
     ):
         self.memory = ConversationMemory(
             max_turns=max_turns,
@@ -1043,6 +1064,7 @@ class MultiAgentContext:
             max_summary_history=max_summary_history,
             compression_callback=compression_callback,
             use_llm_summarizer=use_llm_summarizer,
+            compression_ratio=compression_ratio,
         )
         self.agent_contexts: dict[str, AgentContext] = {}
         self.task_results: dict[str, dict] = {}
