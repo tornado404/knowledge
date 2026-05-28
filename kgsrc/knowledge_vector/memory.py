@@ -79,6 +79,20 @@ class CompressionCallback:
         """
         pass
 
+    def before_compress(self, message_count: int, estimated_tokens: int) -> bool:
+        """压缩前的回调
+
+        返回 True 继续压缩，False 取消压缩
+
+        Args:
+            message_count: 将被压缩的消息数量
+            estimated_tokens: 估计的 token 数量
+
+        Returns:
+            是否继续压缩
+        """
+        return True
+
 
 # ========== LLM 摘要生成器 ==========
 
@@ -785,6 +799,12 @@ class ConversationMemory:
         old_messages = [m for m in self.messages if id(m) not in {id(m2) for m2 in retained_messages}]
 
         if old_messages and summary_content:
+            # 压缩前回调检查
+            if self.compression_callback:
+                old_tokens = sum(estimate_tokens(m.content) for m in old_messages)
+                if not self.compression_callback.before_compress(len(old_messages), old_tokens):
+                    return False  # 用户取消压缩
+
             # 统计信息
             old_tokens = sum(estimate_tokens(m.content) for m in old_messages)
             self.compressed_tokens += old_tokens
