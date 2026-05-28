@@ -373,8 +373,9 @@ class TestConversationMemory:
             memory.add_assistant(f"A{i}")
 
         # 截断模式下 compress() 不起作用
-        result = memory.compress()
-        assert result is False  # 截断模式返回 False
+        success, reason = memory.compress()
+        assert success is False  # 截断模式返回 False
+        assert reason == "truncation_mode"
 
     def test_incremental_compression(self):
         """测试增量压缩"""
@@ -396,6 +397,41 @@ class TestConversationMemory:
 
         memory2 = ConversationMemory(use_llm_summarizer=False)
         assert memory2.use_llm_summarizer is False
+
+    def test_compression_ratio(self):
+        """测试 compression_ratio 参数"""
+        # 默认 compression_ratio 是 0.7
+        memory = ConversationMemory(token_budget=100)
+        assert memory.compression_ratio == 0.7
+
+        # 自定义 compression_ratio
+        memory2 = ConversationMemory(token_budget=100, compression_ratio=0.5)
+        assert memory2.compression_ratio == 0.5
+
+    def test_compress_return_type(self):
+        """测试 compress() 返回 Tuple[bool, str]"""
+        memory = ConversationMemory(max_turns=1, token_budget=50)
+        # 截断模式返回 (False, "truncation_mode")
+        success, reason = memory.compress()
+        assert success is False
+        assert reason == "truncation_mode"
+
+    def test_should_compress_warning(self):
+        """测试 should_compress_warning 预警方法"""
+        memory = ConversationMemory(max_turns=2, compression_threshold=2)
+        # 初始状态不应预警
+        should_warn, ratio = memory.should_compress_warning()
+        assert should_warn is False
+
+        # 添加消息后
+        for i in range(4):
+            memory.add_user(f"问题内容{i}")
+            memory.add_assistant(f"回答内容{i}")
+
+        # 超过 50% 使用率时预警 (0.7 * 0.7 = 0.49 < 0.5)
+        should_warn, ratio = memory.should_compress_warning()
+        # 使用率应该大于 0
+        assert ratio > 0
 
 
 if __name__ == "__main__":
