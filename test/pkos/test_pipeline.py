@@ -70,7 +70,8 @@ def test_pipeline_retry_limit():
         # Force failure in classify stage
         with patch("time.sleep"):
             with patch.object(pipeline.classifier, "classify_content", side_effect=Exception("fail")):
-                result = pipeline.process_task(task_id, raw_text="text")
+                with patch.object(pipeline.indexer, "index_document", return_value=True):
+                    result = pipeline.process_task(task_id, raw_text="text")
 
         assert result is True
         updated = pipeline.store.load(task_id)

@@ -3,7 +3,7 @@
 import os
 from dataclasses import dataclass
 
-from ..knowledge_vector.config import config as _base_config
+from knowledge_vector.config import config as _base_config
 
 
 @dataclass

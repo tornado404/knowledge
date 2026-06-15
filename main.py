@@ -31,6 +31,7 @@ def main():
     parser.add_argument("--source-url", default=None)
     parser.add_argument("--file", default=None)
     parser.add_argument("--text", default=None)
+    parser.add_argument("--task-id", default=None)
 
     args = parser.parse_args()
 
@@ -142,7 +143,7 @@ def main():
             print()
 
     elif args.mode == "pkos":
-        from knowledge_vector.pkos.pipeline import IngestPipeline
+        from kgsrc.pkos.pipeline import IngestPipeline
 
         pipeline = IngestPipeline()
 

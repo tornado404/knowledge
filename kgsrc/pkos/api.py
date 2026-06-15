@@ -143,7 +143,7 @@ async def list_vault_documents(
 @router.get("/vault/search")
 async def search_vault(q: str, k: int = 4):
     """Search Vault documents using Milvus vector search."""
-    from ..knowledge_vector.vectorstore import MilvusVectorStore
+    from knowledge_vector.vectorstore import MilvusVectorStore
 
     try:
         vs = MilvusVectorStore()

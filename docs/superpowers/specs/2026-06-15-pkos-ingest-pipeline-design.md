@@ -1,5 +1,7 @@
 # PKOS Ingest Pipeline 设计文档
 
+> **实现状态**: MVP 阶段 12/12 任务已全部完成（2026-06-15）。详见 [`docs/superpowers/plans/2026-06-15-pkos-ingest-pipeline.md`](../plans/2026-06-15-pkos-ingest-pipeline.md)。
+
 ## 1. 背景与目标
 
 PKOS（Personal Knowledge Operating System）是一个长期运行的个人知识操作系统。本设计聚焦于其 MVP 阶段的核心子系统——**Ingest Pipeline**：负责将多模态原始素材（PDF、图片、网页、文本等）自动转化为结构化的 Markdown 知识文档，归档至 Vault，并向量化索引以支持后续检索与问答。
@@ -12,7 +14,7 @@ PKOS（Personal Knowledge Operating System）是一个长期运行的个人知�
 
 ---
 
-## 2. 架构概览
+## 2. 架构概览 ✅ 已实现
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -48,7 +50,7 @@ PKOS（Personal Knowledge Operating System）是一个长期运行的个人知�
 
 ---
 
-## 3. Vault 目录结构与 Markdown 格式
+## 3. Vault 目录结构与 Markdown 格式 ✅ 已实现
 
 ### 3.1 目录结构
 
@@ -118,7 +120,7 @@ summary: "通过编写简单的Python脚本，将抽象的数学概念转化为�
 
 ---
 
-## 4. IngestPipeline 状态机
+## 4. IngestPipeline 状态机 ✅ 已实现
 
 ### 4.1 状态定义
 
@@ -158,7 +160,7 @@ REGISTERED ──► PARSING ──► UNDERSTANDING ──► CLASSIFYING ─�
 
 ---
 
-## 5. 多模态解析（MVP 范围）
+## 5. 多模态解析 ⚡ 部分实现（MVP 范围已落地）
 
 ### 5.1 支持的内容类型
 
@@ -181,7 +183,7 @@ REGISTERED ──► PARSING ──► UNDERSTANDING ──► CLASSIFYING ─�
 
 ---
 
-## 6. API 设计
+## 6. API 设计 ✅ 已实现
 
 ### 6.1 摄入任务
 
@@ -260,7 +262,7 @@ Response: 200 OK
 
 ---
 
-## 7. 与现有代码的复用关系
+## 7. 与现有代码的复用关系 ✅ 已实现
 
 | PKOS 新模块 | 复用现有模块 | 说明 |
 |------------|------------|------|
@@ -276,7 +278,7 @@ Response: 200 OK
 
 ---
 
-## 8. 错误处理与可观测性
+## 8. 错误处理与可观测性 ⚡ 部分实现（DLQ、Metrics 已落地；结构化日志待补充）
 
 ### 8.1 死信队列（Dead Letter）
 
@@ -319,7 +321,7 @@ GET /pkos/v1/metrics
 
 ---
 
-## 9. 安全与边界
+## 9. 安全与边界 ⚡ 部分实现（文件大小限制、图片白名单已落地；PDF 隔离进程待补充）
 
 - Inbox 目录只接受通过 API 写入的文件，不直接暴露文件系统写入接口（防止恶意文件上传）
 - 文件大小限制：单次上传不超过 50MB
@@ -333,15 +335,53 @@ GET /pkos/v1/metrics
 
 以下功能不在 MVP 范围内，但架构预留扩展点：
 
-| 功能 | 说明 | 扩展点 |
-|------|------|--------|
-| 视频处理 | 提取音频 → Whisper 转录 → LLM 摘要 | 新增 `VideoParser` Worker |
-| 聊天记录导入 | 微信/飞书/Discord 结构化导出 | 新增 `ChatLogParser` |
-| 代码仓库同步 | 监听 Git Webhook，提取关键文档 | 新增 `GitSyncParser` |
-| 知识图谱 | 跨文档实体关联，双向链接自动补全 | Vault 扫描 + 实体提取 Pipeline |
-| 过期知识检测 | 基于时间衰减和更新频率的知识健康度评分 | 定时任务扫描 Vault frontmatter |
-| 浏览器插件 | Chrome/Firefox 剪藏插件 | 调用现有 `/pkos/v1/ingest` API |
-| 多端 App | 手机拍照/截图直接上传 | 同上 |
+| 功能 | 说明 | 扩展点 | 优先级 |
+|------|------|--------|--------|
+| 视频处理 | 提取音频 → Whisper 转录 → LLM 摘要 | 新增 `VideoParser` Worker | P2 |
+| 聊天记录导入 | 微信/飞书/Discord 结构化导出 | 新增 `ChatLogParser` | P2 |
+| 代码仓库同步 | 监听 Git Webhook，提取关键文档 | 新增 `GitSyncParser` | P3 |
+| 知识图谱 | 跨文档实体关联，双向链接自动补全 | Vault 扫描 + 实体提取 Pipeline | P3 |
+| 过期知识检测 | 基于时间衰减和更新频率的知识健康度评分 | 定时任务扫描 Vault frontmatter | P3 |
+| 浏览器插件 | Chrome/Firefox 剪藏插件 | 调用现有 `/pkos/v1/ingest` API | P1 |
+| 多端 App | 手机拍照/截图直接上传 | 同上 | P2 |
+| 结构化日志 | 每 task_id 独立日志链路 | `kgsrc/pkos/logger.py` | P1 |
+| MinIO 对象存储 | 替换本地图片存储为 MinIO/S3 | `ImageParser` 改造 | P2 |
+
+---
+
+---
+
+## 12. 下一步执行计划
+
+MVP 阶段已完整落地（12/12 任务，对应 12 个 commit）。接下来按优先级推进：
+
+### Phase 1: 验证与加固（立即执行）
+
+1. **全量测试运行** — 运行 `pytest test/pkos/` 验证所有测试通过，修复任何环境依赖问题
+2. **FastAPI 服务集成验证** — 启动 `python main.py --mode api` 后，调用 `/pkos/v1/ingest`、`/pkos/v1/metrics` 端点确认路由注册正确
+3. **CLI 端到端验证** — 运行 `python main.py --mode pkos --pkos-action ingest --text "测试内容"` 验证完整链路
+
+### Phase 2: 高优先级扩展（P1）
+
+4. **浏览器剪藏插件 Spec** — 设计 Chrome Extension / Userscript，调用现有 `POST /pkos/v1/ingest` API，支持一键剪藏当前网页
+   - 输出: `docs/superpowers/specs/2026-06-xx-pkos-browser-clip.md`
+5. **结构化日志** — 实现每 `task_id` 独立的日志链路，输出到 `kgsrc/pkos/logs/ingest/YYYY-MM-DD/{task_id}.log`
+   - 文件: `kgsrc/pkos/logger.py`
+   - 格式: JSON Lines，字段 `task_id`, `stage`, `duration_ms`, `error`
+
+### Phase 3: 中优先级扩展（P2）
+
+6. **MinIO 图片存储** — 替换 `ImageParser` 本地存储为 MinIO/S3 兼容对象存储
+7. **视频处理** — Whisper 转录 + LLM 摘要流水线
+8. **手机端上传** — 基于现有 API 的简单 Web 上传页面
+
+### 待创建 Spec 清单
+
+| Spec 文件名 | 目标 | 预计工期 |
+|------------|------|---------|
+| `2026-06-xx-pkos-browser-clip.md` | 浏览器剪藏插件设计 | 1 天 |
+| `2026-06-xx-pkos-structured-logging.md` | 结构化日志与可观测性 | 0.5 天 |
+| `2026-06-xx-pkos-minio-storage.md` | MinIO 对象存储集成 | 0.5 天 |
 
 ---
 

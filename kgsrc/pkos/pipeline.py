@@ -165,9 +165,13 @@ class IngestPipeline:
         # ===== INDEXING =====
         if task.status == TaskStatus.ARCHIVING and task.vault_path:
             try:
-                self.indexer.index_document(task.vault_path)
-                self._transition(task, TaskStatus.INDEXED)
-                return True
+                indexed = self.indexer.index_document(task.vault_path)
+                if indexed:
+                    self._transition(task, TaskStatus.INDEXED)
+                    return True
+                else:
+                    print(f"[Pipeline] Indexing returned False for {task_id}, keeping ARCHIVING status")
+                    return False
             except Exception as e:
                 print(f"[Pipeline] Indexing failed for {task_id}: {e}")
                 # Indexing failure does not block; can retry in background

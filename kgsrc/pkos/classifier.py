@@ -12,7 +12,7 @@ from typing import List, Optional
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage
 
-from ..knowledge_vector.config import config
+from knowledge_vector.config import config
 
 
 def extract_json_block(text: str) -> dict:
@@ -120,6 +120,8 @@ class LLMClassifier:
             # Fallback: use first line as title, first 100 chars as summary
             lines = text.strip().split("\n")
             title = lines[0][:30] if lines else "未命名文档"
+            # Strip Markdown heading markers and whitespace from fallback title
+            title = title.lstrip("# ").strip()[:30]
             return ClassificationResult(
                 title=title,
                 summary=text[:100],

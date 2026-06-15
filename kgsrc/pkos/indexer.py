@@ -6,9 +6,9 @@ from typing import List
 
 from langchain_core.documents import Document
 
-from ..knowledge_vector.vectorstore import MilvusVectorStore
-from ..knowledge_vector.loader import MarkdownLoader
-from ..knowledge_vector.splitter import split_documents
+from knowledge_vector.vectorstore import MilvusVectorStore
+from knowledge_vector.loader import MarkdownLoader
+from knowledge_vector.splitter import split_documents
 
 
 class VaultIndexer:
