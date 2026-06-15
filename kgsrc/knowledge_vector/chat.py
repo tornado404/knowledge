@@ -543,5 +543,17 @@ def _register_multi_agent_routes():
 _register_multi_agent_routes()
 
 
+def _register_pkos_routes():
+    """Register PKOS ingest pipeline routes."""
+    try:
+        from pkos.api import router as pkos_router
+        app.include_router(pkos_router)
+    except ImportError:
+        pass  # PKOS not installed
+
+
+_register_pkos_routes()
+
+
 if __name__ == "__main__":
     run_server()
