@@ -53,6 +53,12 @@ class Config:
     session_storage_dir: str = "./sessions"  # 会话存储目录
     session_max_age_days: int = 30  # 会话最大保留天数
 
+    # PKOS Configuration
+    pkos_vault_dir: str = "./kgsrc/pkos/vault"
+    pkos_inbox_dir: str = "./pkos_inbox"
+    pkos_task_dir: str = "./pkos_tasks"
+    pkos_dlq_dir: str = "./pkos_dead_letter"
+
     @classmethod
     def from_env(cls) -> "Config":
         """Create Config from environment variables."""
@@ -80,6 +86,10 @@ class Config:
             session_persistence=os.getenv("SESSION_PERSISTENCE", "true").lower() == "true",
             session_storage_dir=os.getenv("SESSION_STORAGE_DIR", "./sessions"),
             session_max_age_days=int(os.getenv("SESSION_MAX_AGE_DAYS", "30")),
+            pkos_vault_dir=os.getenv("PKOS_VAULT_DIR", "./kgsrc/pkos/vault"),
+            pkos_inbox_dir=os.getenv("PKOS_INBOX_DIR", "./pkos_inbox"),
+            pkos_task_dir=os.getenv("PKOS_TASK_DIR", "./pkos_tasks"),
+            pkos_dlq_dir=os.getenv("PKOS_DLQ_DIR", "./pkos_dead_letter"),
         )
 
 
