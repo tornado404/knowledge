@@ -1,5 +1,6 @@
 """Main entry point for Knowledge RAG Chat."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -12,9 +13,9 @@ def main():
     parser = argparse.ArgumentParser(description="Knowledge RAG Chat")
     parser.add_argument(
         "--mode",
-        choices=["api", "chat", "retrieve"],
+        choices=["api", "chat", "retrieve", "pkos"],
         default="api",
-        help="Run mode: api (FastAPI server), chat (interactive chat), retrieve (search only)",
+        help="Run mode: api (FastAPI server), chat (interactive chat), retrieve (search only), pkos",
     )
     parser.add_argument("--host", default="0.0.0.0", help="API server host")
     parser.add_argument("--port", type=int, default=8000, help="API server port")
@@ -25,6 +26,11 @@ def main():
         action="store_true",
         help="Enable multi-agent collaboration mode"
     )
+    parser.add_argument("--pkos-action", choices=["ingest", "status", "index", "metrics"], default="ingest")
+    parser.add_argument("--source-type", default="text")
+    parser.add_argument("--source-url", default=None)
+    parser.add_argument("--file", default=None)
+    parser.add_argument("--text", default=None)
 
     args = parser.parse_args()
 
@@ -134,6 +140,44 @@ def main():
             print(f"{i}. [{source}]")
             print(f"   {content}...")
             print()
+
+    elif args.mode == "pkos":
+        from knowledge_vector.pkos.pipeline import IngestPipeline
+
+        pipeline = IngestPipeline()
+
+        action = args.pkos_action or "ingest"
+        if action == "ingest":
+            task = pipeline.register(
+                source_type=args.source_type,
+                source_url=args.source_url,
+            )
+            print(f"Registered task: {task.task_id}")
+
+            if args.text:
+                pipeline.process_task(task.task_id, raw_text=args.text)
+            elif args.file:
+                pipeline.process_task(task.task_id, file_path=args.file)
+
+            final = pipeline.store.load(task.task_id)
+            print(f"Status: {final.status.value}")
+            if final.vault_path:
+                print(f"Vault: {final.vault_path}")
+
+        elif action == "status":
+            status = pipeline.get_status(args.task_id)
+            if status:
+                print(f"Task {args.task_id}: {status.value}")
+            else:
+                print(f"Task {args.task_id}: not found")
+
+        elif action == "index":
+            count = pipeline.indexer.index_all_unindexed()
+            print(f"Indexed {count} documents")
+
+        elif action == "metrics":
+            metrics = pipeline.get_metrics()
+            print(json.dumps(metrics, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":
