@@ -1,6 +1,6 @@
 # PKOS Browser Extension v2 — 完整功能设计
 
-> 实现状态：设计中
+> 实现状态：✅ 已实现
 
 ## 目标
 
