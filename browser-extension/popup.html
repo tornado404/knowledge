@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>PKOS Clip</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>PKOS Clip</h1>
+      <p class="subtitle">Personal Knowledge Operating System</p>
+    </header>
+
+    <main>
+      <button id="btn-read-url" class="btn-primary">
+        读取当前页面网址
+      </button>
+
+      <div id="url-display" class="url-display hidden">
+        <span class="url-label">当前页面</span>
+        <p id="page-title" class="page-title"></p>
+        <span class="url-label">链接</span>
+        <p id="url-text" class="url-text"></p>
+      </div>
+    </main>
+
+    <footer>
+      <p>点击按钮读取并显示当前页面 URL</p>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
