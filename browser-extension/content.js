@@ -77,10 +77,29 @@
   }
 
   function getFullPageContent() {
-    // Basic extraction - will be enhanced with Readability in Task 8
-    const body = document.body;
+    // Try to use Readability for clean extraction
+    try {
+      if (typeof Readability !== 'undefined') {
+        const documentClone = document.cloneNode(true);
+        const reader = new Readability(documentClone);
+        const article = reader.parse();
 
-    // Remove script, style, nav, header, footer, aside elements
+        if (article) {
+          return {
+            text: article.textContent || article.textContent,
+            html: article.content,
+            title: article.title || document.title,
+            url: window.location.href,
+            excerpt: article.excerpt,
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('[PKOS Clip] Readability failed, using fallback:', e);
+    }
+
+    // Fallback: Basic extraction
+    const body = document.body;
     const clone = body.cloneNode(true);
     const removeSelectors = ['script', 'style', 'nav', 'header', 'footer', 'aside', '.sidebar', '.navigation', '.comments'];
     removeSelectors.forEach(selector => {
