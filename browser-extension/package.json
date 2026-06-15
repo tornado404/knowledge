@@ -1,0 +1,32 @@
+{
+  "name": "pkos-clip",
+  "version": "2.0.0",
+  "description": "PKOS Browser Extension - Web Clipper",
+  "scripts": {
+    "test": "jest",
+    "test:coverage": "jest --coverage",
+    "test:watch": "jest --watch"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "jsdom",
+    "setupFilesAfterEnv": ["<rootDir>/tests/setup.js"],
+    "testMatch": ["<rootDir>/tests/**/*.test.js"],
+    "collectCoverageFrom": [
+      "<rootDir>/tests/popup-utils.js",
+      "<rootDir>/tests/content-utils.js",
+      "<rootDir>/tests/background-utils.js"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "branches": 50,
+        "functions": 50,
+        "lines": 50,
+        "statements": 50
+      }
+    }
+  }
+}
