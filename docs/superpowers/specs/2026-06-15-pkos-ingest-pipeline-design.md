@@ -353,32 +353,41 @@ GET /pkos/v1/metrics
 
 ## 12. 下一步执行计划
 
-MVP 阶段已完整落地（12/12 任务，对应 12 个 commit）。接下来按优先级推进：
+MVP 阶段已完整落地（12/12 任务，对应 12 个 commit）。Phase 1 验证已完成，发现并修复了以下问题：
 
-### Phase 1: 验证与加固（立即执行）
+### Phase 1 验证结果（2026-06-15）
 
-1. **全量测试运行** — 运行 `pytest test/pkos/` 验证所有测试通过，修复任何环境依赖问题
-2. **FastAPI 服务集成验证** — 启动 `python main.py --mode api` 后，调用 `/pkos/v1/ingest`、`/pkos/v1/metrics` 端点确认路由注册正确
-3. **CLI 端到端验证** — 运行 `python main.py --mode pkos --pkos-action ingest --text "测试内容"` 验证完整链路
+| 验证项 | 结果 | 发现的问题 |
+|--------|------|-----------|
+| 全量测试运行 | ✅ 46/46 通过 | 需要 `PYTHONPATH` 包含项目根目录 |
+| FastAPI 集成 | ✅ 所有端点正常 | 相对导入路径问题（已修复） |
+| CLI 端到端 | ✅ 链路打通 | 导入路径 + fallback title 格式 + index 状态标记（已修复） |
+
+### 已修复的 Bug
+
+1. **Import 路径错误** — `main.py` 和 `kgsrc/pkos/` 模块使用 `knowledge_vector.pkos` 或 `..knowledge_vector` 相对导入，统一改为 `kgsrc.pkos` / `knowledge_vector` 绝对导入
+2. **Pipeline index 状态标记** — `index_document()` 返回 False 时仍标记为 INDEXED，现已检查返回值
+3. **Classifier fallback title 污染** — fallback 时 title 包含 `#` Markdown 标记，现已清洗
+4. **CLI 缺少 `--task-id` 参数** — `status` 子命令需要 task_id 但 parser 未定义，已补充
 
 ### Phase 2: 高优先级扩展（P1）
 
-4. **浏览器剪藏插件 Spec** — 设计 Chrome Extension / Userscript，调用现有 `POST /pkos/v1/ingest` API，支持一键剪藏当前网页
+5. **浏览器剪藏插件 Spec** — 设计 Chrome Extension / Userscript，调用现有 `POST /pkos/v1/ingest` API，支持一键剪藏当前网页
    - 输出: `docs/superpowers/specs/2026-06-xx-pkos-browser-clip.md`
-5. **结构化日志** — 实现每 `task_id` 独立的日志链路，输出到 `kgsrc/pkos/logs/ingest/YYYY-MM-DD/{task_id}.log`
+6. **结构化日志** — 实现每 `task_id` 独立的日志链路，输出到 `kgsrc/pkos/logs/ingest/YYYY-MM-DD/{task_id}.log`
    - 文件: `kgsrc/pkos/logger.py`
    - 格式: JSON Lines，字段 `task_id`, `stage`, `duration_ms`, `error`
 
 ### Phase 3: 中优先级扩展（P2）
 
-6. **MinIO 图片存储** — 替换 `ImageParser` 本地存储为 MinIO/S3 兼容对象存储
-7. **视频处理** — Whisper 转录 + LLM 摘要流水线
-8. **手机端上传** — 基于现有 API 的简单 Web 上传页面
+7. **MinIO 图片存储** — 替换 `ImageParser` 本地存储为 MinIO/S3 兼容对象存储
+8. **视频处理** — Whisper 转录 + LLM 摘要流水线
+9. **手机端上传** — 基于现有 API 的简单 Web 上传页面
 
 ### 待创建 Spec 清单
 
 | Spec 文件名 | 目标 | 预计工期 |
-|------------|------|---------|
+|-----------|------|---------|
 | `2026-06-xx-pkos-browser-clip.md` | 浏览器剪藏插件设计 | 1 天 |
 | `2026-06-xx-pkos-structured-logging.md` | 结构化日志与可观测性 | 0.5 天 |
 | `2026-06-xx-pkos-minio-storage.md` | MinIO 对象存储集成 | 0.5 天 |
