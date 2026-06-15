@@ -62,3 +62,74 @@ def test_parsed_content():
     assert pc.raw_text == "hello world"
     assert pc.title == "Hello"
     assert pc.entities == []
+
+
+import tempfile
+import shutil
+from pathlib import Path
+from kgsrc.pkos.store import IngestTaskStore
+
+
+def test_store_save_and_load():
+    tmpdir = tempfile.mkdtemp()
+    try:
+        store = IngestTaskStore(storage_dir=tmpdir)
+        task = IngestTask(task_id="store-001", source_type="text")
+        assert store.save(task) is True
+
+        loaded = store.load("store-001")
+        assert loaded is not None
+        assert loaded.task_id == "store-001"
+        assert loaded.status == TaskStatus.REGISTERED
+    finally:
+        shutil.rmtree(tmpdir)
+
+
+def test_store_load_missing():
+    tmpdir = tempfile.mkdtemp()
+    try:
+        store = IngestTaskStore(storage_dir=tmpdir)
+        assert store.load("missing") is None
+    finally:
+        shutil.rmtree(tmpdir)
+
+
+def test_store_list():
+    tmpdir = tempfile.mkdtemp()
+    try:
+        store = IngestTaskStore(storage_dir=tmpdir)
+        store.save(IngestTask(task_id="a", source_type="text"))
+        store.save(IngestTask(task_id="b", source_type="pdf"))
+        ids = store.list_tasks()
+        assert sorted(ids) == ["a", "b"]
+    finally:
+        shutil.rmtree(tmpdir)
+
+
+def test_store_update():
+    tmpdir = tempfile.mkdtemp()
+    try:
+        store = IngestTaskStore(storage_dir=tmpdir)
+        task = IngestTask(task_id="update-001", source_type="text")
+        store.save(task)
+
+        task.status = TaskStatus.PARSING
+        task.retry_count = 1
+        store.save(task)
+
+        loaded = store.load("update-001")
+        assert loaded.status == TaskStatus.PARSING
+        assert loaded.retry_count == 1
+    finally:
+        shutil.rmtree(tmpdir)
+
+
+def test_store_cleanup_expired():
+    tmpdir = tempfile.mkdtemp()
+    try:
+        store = IngestTaskStore(storage_dir=tmpdir, max_age_days=0)
+        store.save(IngestTask(task_id="old", source_type="text"))
+        deleted = store.cleanup_expired()
+        assert deleted >= 0
+    finally:
+        shutil.rmtree(tmpdir)
