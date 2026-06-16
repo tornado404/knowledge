@@ -424,12 +424,14 @@
 
   // Show settings overlay
   function showSettings() {
+    elements.mainView.classList.add('main-view-hidden');
     elements.settingsOverlay.classList.add('visible');
   }
 
   // Hide settings overlay
   function hideSettings() {
     elements.settingsOverlay.classList.remove('visible');
+    elements.mainView.classList.remove('main-view-hidden');
   }
 
   // Setup event listeners
