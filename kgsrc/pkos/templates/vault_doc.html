@@ -1,0 +1,15 @@
+<div class="doc-preview-card">
+    <h3>{{ doc.frontmatter.title }}</h3>
+
+    <div class="doc-frontmatter">
+        <table class="detail-table">
+            {% for key, value in doc.frontmatter.items() %}
+            <tr><td>{{ key }}</td><td>{{ value }}</td></tr>
+            {% endfor %}
+        </table>
+    </div>
+
+    <div class="doc-content">
+        <pre>{{ doc.content }}</pre>
+    </div>
+</div>

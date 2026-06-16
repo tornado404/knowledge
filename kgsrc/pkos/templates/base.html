@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PKOS Dashboard</title>
+    <link rel="stylesheet" href="/pkos/v1/dashboard/static/style.css">
+    <script src="https://unpkg.com/htmx.org@1.9.12" integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2" crossorigin="anonymous"></script>
+</head>
+<body>
+    <header class="topbar">
+        <div class="topbar-brand">PKOS Dashboard</div>
+        <nav class="topbar-nav">
+            <a href="/pkos/v1/dashboard/tasks"
+               class="topbar-link {% if active_tab == 'tasks' %}active{% endif %}"
+               hx-get="/pkos/v1/dashboard/tasks"
+               hx-target="#main-content"
+               hx-push-url="true">Tasks</a>
+            <a href="/pkos/v1/dashboard/vault"
+               class="topbar-link {% if active_tab == 'vault' %}active{% endif %}"
+               hx-get="/pkos/v1/dashboard/vault"
+               hx-target="#main-content"
+               hx-push-url="true">Vault</a>
+            <a href="/pkos/v1/dashboard/metrics"
+               class="topbar-link {% if active_tab == 'metrics' %}active{% endif %}"
+               hx-get="/pkos/v1/dashboard/metrics"
+               hx-target="#main-content"
+               hx-push-url="true">Metrics</a>
+        </nav>
+    </header>
+
+    <div class="layout">
+        <aside class="sidebar">
+            <nav class="sidebar-nav">
+                <a href="/pkos/v1/dashboard/tasks"
+                   class="sidebar-link {% if active_tab == 'tasks' %}active{% endif %}"
+                   hx-get="/pkos/v1/dashboard/tasks"
+                   hx-target="#main-content"
+                   hx-push-url="true">
+                   <span class="sidebar-icon">&#128203;</span> Tasks
+                </a>
+                <a href="/pkos/v1/dashboard/vault"
+                   class="sidebar-link {% if active_tab == 'vault' %}active{% endif %}"
+                   hx-get="/pkos/v1/dashboard/vault"
+                   hx-target="#main-content"
+                   hx-push-url="true">
+                   <span class="sidebar-icon">&#128193;</span> Vault
+                </a>
+                <a href="/pkos/v1/dashboard/metrics"
+                   class="sidebar-link {% if active_tab == 'metrics' %}active{% endif %}"
+                   hx-get="/pkos/v1/dashboard/metrics"
+                   hx-target="#main-content"
+                   hx-push-url="true">
+                   <span class="sidebar-icon">&#128202;</span> Metrics
+                </a>
+            </nav>
+        </aside>
+
+        <main id="main-content" class="main-content">
+            {{ content_html | safe }}
+        </main>
+    </div>
+</body>
+</html>

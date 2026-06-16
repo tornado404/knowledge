@@ -33,6 +33,7 @@ class PKOSConfig:
     milvus_collection: str = ""
     milvus_host: str = ""
     milvus_port: int = 19530
+    pkos_dashboard_enabled: bool = True
 
     @classmethod
     def from_base(cls):
@@ -51,6 +52,7 @@ class PKOSConfig:
             s3_bucket=os.getenv("PKOS_S3_BUCKET", "pkos"),
             s3_region=os.getenv("PKOS_S3_REGION", "us-east-1"),
             s3_secure=os.getenv("PKOS_S3_SECURE", "false").lower() == "true",
+            pkos_dashboard_enabled=os.getenv("PKOS_DASHBOARD_ENABLED", "true").lower() == "true",
             anthropic_model=_base_config.anthropic_model,
             anthropic_api_key=_base_config.anthropic_api_key,
             anthropic_base_url=_base_config.anthropic_base_url,

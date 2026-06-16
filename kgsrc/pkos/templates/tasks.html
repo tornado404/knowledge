@@ -1,0 +1,53 @@
+<div class="tasks-page">
+    <h2>Tasks</h2>
+
+    <div class="filter-bar">
+        <a href="/pkos/v1/dashboard/tasks"
+           class="filter-chip {% if not current_status %}active{% endif %}"
+           hx-get="/pkos/v1/dashboard/tasks"
+           hx-target="#main-content"
+           hx-push-url="true">All</a>
+        <a href="/pkos/v1/dashboard/tasks?status=REGISTERED"
+           class="filter-chip {% if current_status == 'REGISTERED' %}active{% endif %}"
+           hx-get="/pkos/v1/dashboard/tasks?status=REGISTERED"
+           hx-target="#main-content"
+           hx-push-url="true">Registered</a>
+        <a href="/pkos/v1/dashboard/tasks?status=INDEXED"
+           class="filter-chip {% if current_status == 'INDEXED' %}active{% endif %}"
+           hx-get="/pkos/v1/dashboard/tasks?status=INDEXED"
+           hx-target="#main-content"
+           hx-push-url="true">Indexed</a>
+        <a href="/pkos/v1/dashboard/tasks?status=FAILED"
+           class="filter-chip {% if current_status == 'FAILED' %}active{% endif %}"
+           hx-get="/pkos/v1/dashboard/tasks?status=FAILED"
+           hx-target="#main-content"
+           hx-push-url="true">Failed</a>
+        <a href="/pkos/v1/dashboard/tasks?status=DEAD_LETTER"
+           class="filter-chip {% if current_status == 'DEAD_LETTER' %}active{% endif %}"
+           hx-get="/pkos/v1/dashboard/tasks?status=DEAD_LETTER"
+           hx-target="#main-content"
+           hx-push-url="true">Dead Letter</a>
+    </div>
+
+    <div class="task-list">
+        {% for task in tasks %}
+        <div class="task-row"
+             hx-get="/pkos/v1/dashboard/tasks/{{ task.task_id }}"
+             hx-target="#task-detail-{{ task.task_id }}"
+             hx-swap="innerHTML">
+            <div class="task-row-main">
+                <span class="task-id">{{ task.task_id }}</span>
+                <span class="task-source">{{ task.source_type }}</span>
+                <span class="task-status status-{{ task.status | lower }}">{{ task.status }}</span>
+                <span class="task-time">{{ task.created_at[:16] }}</span>
+            </div>
+            {% if task.error %}
+            <div class="task-error">{{ task.error }}</div>
+            {% endif %}
+        </div>
+        <div id="task-detail-{{ task.task_id }}" class="task-detail"></div>
+        {% else %}
+        <div class="empty-state">No tasks found.</div>
+        {% endfor %}
+    </div>
+</div>

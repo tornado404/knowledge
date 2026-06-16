@@ -1,0 +1,37 @@
+<div class="vault-page">
+    <h2>Vault Documents</h2>
+
+    <div class="filter-bar">
+        <form class="vault-filters" hx-get="/pkos/v1/dashboard/vault" hx-target="#main-content" hx-push-url="true">
+            <select name="topic" class="filter-select">
+                <option value="">All Topics</option>
+                {% for t in topics %}
+                <option value="{{ t }}" {% if t == current_topic %}selected{% endif %}>{{ t }}</option>
+                {% endfor %}
+            </select>
+            <input type="text" name="identity" placeholder="Identity" value="{{ current_identity }}" class="filter-input">
+            <input type="text" name="tag" placeholder="Tag" value="{{ current_tag }}" class="filter-input">
+            <button type="submit" class="filter-btn">Filter</button>
+        </form>
+    </div>
+
+    <div class="doc-list">
+        {% for doc in documents %}
+        <div class="doc-row"
+             hx-get="/pkos/v1/dashboard/vault/{{ doc.path }}"
+             hx-target="#doc-preview"
+             hx-swap="innerHTML">
+            <div class="doc-title">&#128196; {{ doc.title }}</div>
+            <div class="doc-meta">
+                <span class="doc-topic">{{ doc.topic }}</span>
+                <span class="doc-identities">{{ doc.identities | join(", ") }}</span>
+                <span class="doc-tags">{{ doc.tags | join(", ") }}</span>
+            </div>
+        </div>
+        {% else %}
+        <div class="empty-state">No documents found.</div>
+        {% endfor %}
+    </div>
+
+    <div id="doc-preview" class="doc-preview"></div>
+</div>
