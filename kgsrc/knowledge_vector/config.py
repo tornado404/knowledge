@@ -19,6 +19,11 @@ class Config:
     anthropic_api_key: str = ""
     anthropic_model: str = ""
 
+    # Secondary LLM (fallback)
+    llm_base_url: str = ""
+    llm_api_key: str = ""
+    llm_model: str = ""
+
     # MiniMax Embedding
     minimax_embed_model: str = "embeddings@MiniMax/MiniMax-Embedding-M2"
     minimax_embed_api_key: str = ""
@@ -90,6 +95,9 @@ class Config:
             pkos_inbox_dir=os.getenv("PKOS_INBOX_DIR", "./pkos_inbox"),
             pkos_task_dir=os.getenv("PKOS_TASK_DIR", "./pkos_tasks"),
             pkos_dlq_dir=os.getenv("PKOS_DLQ_DIR", "./pkos_dead_letter"),
+            llm_base_url=os.getenv("LLM_BASE_URL", ""),
+            llm_api_key=os.getenv("LLM_API_KEY", ""),
+            llm_model=os.getenv("LLM_MODEL", ""),
         )
 
 
