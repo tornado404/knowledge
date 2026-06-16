@@ -12,6 +12,7 @@ from .classifier import LLMClassifier
 from .vault import VaultManager
 from .indexer import VaultIndexer
 from .dead_letter import DeadLetterQueue
+from .logger import PipelineLogger
 
 
 class IngestPipeline:
@@ -39,6 +40,7 @@ class IngestPipeline:
         self.indexer = VaultIndexer()
         self.inbox_dir = Path(inbox_dir)
         self.inbox_dir.mkdir(parents=True, exist_ok=True)
+        self.logger = PipelineLogger()
 
     def register(
         self,
@@ -58,6 +60,12 @@ class IngestPipeline:
         return task
 
     def _transition(self, task: IngestTask, new_status: TaskStatus, error: str = None):
+        task_logger = self.logger.get_task_logger(task.task_id)
+        task_logger.info(
+            stage=new_status.value,
+            message=f"Transition to {new_status.value}",
+            error=error,
+        )
         task.status = new_status
         if error:
             task.error = error
@@ -88,11 +96,17 @@ class IngestPipeline:
             print(f"[Pipeline] Task not found: {task_id}")
             return False
 
+        task_logger = self.logger.get_task_logger(task.task_id)
+
         # ===== PARSING =====
         if task.status in (TaskStatus.REGISTERED, TaskStatus.FAILED):
             try:
                 self._transition(task, TaskStatus.PARSING)
+                t0 = time.time()
                 parsed = self._parse(task, raw_text, file_path)
+                duration_ms = round((time.time() - t0) * 1000, 1)
+                task_logger.info(stage="PARSING", message="PARSING complete",
+                                 duration_ms=duration_ms)
             except Exception as e:
                 if self._should_retry(task):
                     self._do_retry(task)
@@ -106,9 +120,13 @@ class IngestPipeline:
             # ===== UNDERSTANDING =====
             try:
                 self._transition(task, TaskStatus.UNDERSTANDING)
+                t0 = time.time()
                 classified = self.classifier.classify_content(parsed.raw_text, task.source_type)
+                duration_ms = round((time.time() - t0) * 1000, 1)
                 parsed.title = classified.title or parsed.title
                 parsed.summary = classified.summary
+                task_logger.info(stage="UNDERSTANDING", message="UNDERSTANDING complete",
+                                 duration_ms=duration_ms)
             except Exception as e:
                 if self._should_retry(task):
                     self._do_retry(task)
@@ -126,9 +144,13 @@ class IngestPipeline:
             # ===== CLASSIFYING =====
             try:
                 self._transition(task, TaskStatus.CLASSIFYING)
+                t0 = time.time()
                 task.topic = classified.topic or "未分类"
                 task.identities = classified.identities or task.identities
                 task.tags = classified.tags or []
+                duration_ms = round((time.time() - t0) * 1000, 1)
+                task_logger.info(stage="CLASSIFYING", message="CLASSIFYING complete",
+                                 duration_ms=duration_ms)
             except Exception as e:
                 if self._should_retry(task):
                     self._do_retry(task)
@@ -140,6 +162,7 @@ class IngestPipeline:
             # ===== ARCHIVING =====
             try:
                 self._transition(task, TaskStatus.ARCHIVING)
+                t0 = time.time()
                 vault_path = self.vault.write_document(
                     topic=task.topic,
                     title=parsed.title or "未命名文档",
@@ -154,6 +177,9 @@ class IngestPipeline:
                     task.vault_path = str(vault_path)
                 else:
                     raise RuntimeError("Vault write returned None")
+                duration_ms = round((time.time() - t0) * 1000, 1)
+                task_logger.info(stage="ARCHIVING", message="ARCHIVING complete",
+                                 duration_ms=duration_ms)
             except Exception as e:
                 # ARCHIVING failure is non-retryable
                 self._transition(task, TaskStatus.DEAD_LETTER, str(e))
@@ -165,9 +191,13 @@ class IngestPipeline:
         # ===== INDEXING =====
         if task.status == TaskStatus.ARCHIVING and task.vault_path:
             try:
+                t0 = time.time()
                 indexed = self.indexer.index_document(task.vault_path)
+                duration_ms = round((time.time() - t0) * 1000, 1)
                 if indexed:
                     self._transition(task, TaskStatus.INDEXED)
+                    task_logger.info(stage="INDEXED", message="INDEXED complete",
+                                     duration_ms=duration_ms)
                     return True
                 else:
                     print(f"[Pipeline] Indexing returned False for {task_id}, keeping ARCHIVING status")
