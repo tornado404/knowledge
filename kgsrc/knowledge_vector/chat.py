@@ -555,5 +555,17 @@ def _register_pkos_routes():
 _register_pkos_routes()
 
 
+def _register_pkos_dashboard_routes():
+    """Register PKOS Dashboard routes."""
+    try:
+        from pkos.dashboard import _register_pkos_dashboard_routes as _reg
+        _reg(app)
+    except ImportError:
+        pass  # PKOS Dashboard not available
+
+
+_register_pkos_dashboard_routes()
+
+
 if __name__ == "__main__":
     run_server()
