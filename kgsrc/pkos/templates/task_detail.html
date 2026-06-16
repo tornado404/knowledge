@@ -1,0 +1,18 @@
+<div class="task-detail-card">
+    <h3>Task Detail</h3>
+    <table class="detail-table">
+        <tr><td>Task ID</td><td>{{ task.task_id }}</td></tr>
+        <tr><td>Source Type</td><td>{{ task.source_type }}</td></tr>
+        <tr><td>Status</td><td class="status-{{ task.status | lower }}">{{ task.status }}</td></tr>
+        <tr><td>Created</td><td>{{ task.created_at }}</td></tr>
+        <tr><td>Updated</td><td>{{ task.updated_at }}</td></tr>
+        <tr><td>Topic</td><td>{{ task.topic or "-" }}</td></tr>
+        <tr><td>Identities</td><td>{{ task.identities | join(", ") or "-" }}</td></tr>
+        <tr><td>Tags</td><td>{{ task.tags | join(", ") or "-" }}</td></tr>
+        <tr><td>Retry Count</td><td>{{ task.retry_count }}</td></tr>
+        <tr><td>Vault Path</td><td>{{ task.vault_path or "-" }}</td></tr>
+        {% if task.error %}
+        <tr><td>Error</td><td class="error-text">{{ task.error }}</td></tr>
+        {% endif %}
+    </table>
+</div>

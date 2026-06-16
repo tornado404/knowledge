@@ -1,0 +1,47 @@
+<div class="metrics-page"
+     hx-get="/pkos/v1/dashboard/metrics"
+     hx-trigger="every 30s"
+     hx-target="this"
+     hx-swap="innerHTML">
+    <h2>Metrics</h2>
+
+    <div class="metrics-cards">
+        <div class="metric-card">
+            <div class="metric-value">{{ total }}</div>
+            <div class="metric-label">Total Tasks</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-value">{{ by_status.get("INDEXED", 0) }}</div>
+            <div class="metric-label">Indexed</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-value">{{ by_status.get("FAILED", 0) }}</div>
+            <div class="metric-label">Failed</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-value">{{ by_status.get("DEAD_LETTER", 0) }}</div>
+            <div class="metric-label">Dead Letter</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-value">{{ by_status.get("REGISTERED", 0) }}</div>
+            <div class="metric-label">Registered</div>
+        </div>
+    </div>
+
+    <div class="status-bar-chart">
+        <h3>Status Distribution</h3>
+        {% set max_count = [by_status.get("INDEXED", 0), by_status.get("FAILED", 0), by_status.get("DEAD_LETTER", 0), by_status.get("REGISTERED", 0), by_status.get("PARSING", 0), by_status.get("UNDERSTANDING", 0), by_status.get("CLASSIFYING", 0), by_status.get("ARCHIVING", 0)] | max %}
+        {% if max_count == 0 %}{% set max_count = 1 %}{% endif %}
+        {% for status_name in ["INDEXED", "FAILED", "DEAD_LETTER", "REGISTERED", "PARSING", "UNDERSTANDING", "CLASSIFYING", "ARCHIVING"] %}
+        {% set count = by_status.get(status_name, 0) %}
+        {% set pct = (count / max_count * 100) | int %}
+        <div class="bar-row">
+            <span class="bar-label">{{ status_name }}</span>
+            <div class="bar-track">
+                <div class="bar-fill status-{{ status_name | lower }}" style="width: {{ pct }}%"></div>
+            </div>
+            <span class="bar-value">{{ count }}</span>
+        </div>
+        {% endfor %}
+    </div>
+</div>

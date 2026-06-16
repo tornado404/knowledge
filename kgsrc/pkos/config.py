@@ -25,6 +25,7 @@ class PKOSConfig:
     milvus_collection: str = ""
     milvus_host: str = ""
     milvus_port: int = 19530
+    pkos_dashboard_enabled: bool = True
 
     @classmethod
     def from_base(cls):
@@ -36,6 +37,7 @@ class PKOSConfig:
             image_storage_dir=os.getenv("PKOS_IMAGE_DIR", "./pkos_images"),
             indexed_file=os.getenv("PKOS_INDEXED_FILE", "./pkos_indexed.json"),
             max_file_size_mb=int(os.getenv("PKOS_MAX_FILE_SIZE_MB", "50")),
+            pkos_dashboard_enabled=os.getenv("PKOS_DASHBOARD_ENABLED", "true").lower() == "true",
             anthropic_model=_base_config.anthropic_model,
             anthropic_api_key=_base_config.anthropic_api_key,
             anthropic_base_url=_base_config.anthropic_base_url,
