@@ -3,6 +3,39 @@
 (function () {
   'use strict';
 
+  // Cache for selected text - memory only, sufficient since content script lives as long as the page
+  let cachedSelection = { text: '', html: '' };
+
+  // Helper function to get HTML from selection
+  function getSelectionHtml(selection) {
+    let html = '';
+    try {
+      if (selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0);
+        const div = document.createElement('div');
+        div.appendChild(range.cloneContents());
+        html = div.innerHTML;
+      }
+    } catch (e) {
+      console.warn('[PKOS Clip] Could not get selection HTML:', e);
+    }
+    return html;
+  }
+
+  // Listen for selection changes and cache to memory
+  // Chrome clears selection when popup opens, so we need this cache
+  document.addEventListener('selectionchange', () => {
+    const selection = window.getSelection();
+    const text = selection.toString().trim();
+
+    if (text) {
+      cachedSelection = {
+        text: text,
+        html: getSelectionHtml(selection)
+      };
+    }
+  });
+
   // Listen for messages from popup/background
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     switch (message.type) {
@@ -39,7 +72,6 @@
     if (link) {
       return link.href;
     }
-    // Fallback to default favicon path
     return new URL('/favicon.ico', window.location.origin).href;
   }
 
@@ -52,28 +84,24 @@
     const selection = window.getSelection();
     const text = selection.toString().trim();
 
-    if (!text) {
-      return { selection: '', html: '' };
+    // If there's current selection, return it
+    if (text) {
+      return {
+        selection: text,
+        html: getSelectionHtml(selection)
+      };
     }
 
-    // Try to get HTML of selection
-    let html = '';
-    try {
-      if (selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0);
-        const div = document.createElement('div');
-        div.appendChild(range.cloneContents());
-        html = div.innerHTML;
-      }
-    } catch (e) {
-      console.warn('[PKOS Clip] Could not get selection HTML:', e);
+    // If no current selection but we have cached selection, return that
+    // This handles the case where Chrome cleared selection when popup opened
+    if (cachedSelection.text) {
+      return {
+        selection: cachedSelection.text,
+        html: cachedSelection.html
+      };
     }
 
-    return {
-      selection: text,
-      html: html,
-      rangeCount: selection.rangeCount,
-    };
+    return { selection: '', html: '' };
   }
 
   function getFullPageContent() {
@@ -116,6 +144,4 @@
       url: window.location.href,
     };
   }
-
-  console.log('[PKOS Clip] Content script loaded on', window.location.href);
 })();

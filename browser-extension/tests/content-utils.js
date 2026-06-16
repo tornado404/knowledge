@@ -1,10 +1,48 @@
 /**
  * Content Script - Testable Version
- * This module exports functions for testing while maintaining the original IIFE structure
+ * Simplified: memory cache only, no storage dependency
  */
 
-// Extract functions for testing
+// Cache for selected text - memory only
+let cachedSelection = { text: '', html: '' };
+
 const ContentScript = {
+  // Expose cache for testing
+  _cachedSelection: cachedSelection,
+
+  // Reset state for testing
+  _reset() {
+    cachedSelection = { text: '', html: '' };
+    this._cachedSelection = cachedSelection;
+  },
+
+  // Simulate selectionchange event handler
+  onSelectionChange(selection) {
+    const text = selection.toString().trim();
+    if (text) {
+      cachedSelection = {
+        text: text,
+        html: this.getSelectionHtml(selection)
+      };
+      this._cachedSelection = cachedSelection;
+    }
+  },
+
+  getSelectionHtml(selection) {
+    let html = '';
+    try {
+      if (selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0);
+        const div = document.createElement('div');
+        div.appendChild(range.cloneContents());
+        html = div.innerHTML;
+      }
+    } catch (e) {
+      console.warn('[PKOS Clip] Could not get selection HTML:', e);
+    }
+    return html;
+  },
+
   getPageInfo() {
     return {
       title: document.title || '',
@@ -28,35 +66,42 @@ const ContentScript = {
     return meta ? meta.getAttribute('content') : '';
   },
 
+  /**
+   * Get selection with cache fallback
+   * Chrome clears selection when popup opens, so we use memory cache
+   */
   getSelection() {
     const selection = window.getSelection();
     const text = selection.toString().trim();
 
-    if (!text) {
-      return { selection: '', html: '' };
+    // If there's current selection, return it
+    if (text) {
+      return {
+        selection: text,
+        html: this.getSelectionHtml(selection)
+      };
     }
 
-    let html = '';
-    try {
-      if (selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0);
-        const div = document.createElement('div');
-        div.appendChild(range.cloneContents());
-        html = div.innerHTML;
-      }
-    } catch (e) {
-      console.warn('[PKOS Clip] Could not get selection HTML:', e);
+    // If no current selection but we have cached selection, return that
+    if (cachedSelection.text) {
+      return {
+        selection: cachedSelection.text,
+        html: cachedSelection.html
+      };
     }
 
-    return {
-      selection: text,
-      html: html,
-      rangeCount: selection.rangeCount,
-    };
+    return { selection: '', html: '' };
+  },
+
+  /**
+   * Simulate Chrome clearing selection when popup opens
+   */
+  clearSelection() {
+    const selection = window.getSelection();
+    selection.removeAllRanges();
   },
 
   getFullPageContent() {
-    // Try to use Readability for clean extraction
     try {
       if (typeof Readability !== 'undefined') {
         const documentClone = document.cloneNode(true);
@@ -77,7 +122,6 @@ const ContentScript = {
       console.warn('[PKOS Clip] Readability failed, using fallback:', e);
     }
 
-    // Fallback: Basic extraction
     const body = document.body;
     const clone = body.cloneNode(true);
     const removeSelectors = ['script', 'style', 'nav', 'header', 'footer', 'aside', '.sidebar', '.navigation', '.comments'];
@@ -114,17 +158,9 @@ const ContentScript = {
         sendResponse({ error: 'Unknown message type' });
     }
     return true;
-  },
-
-  init() {
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      return this.handleMessage(message, sender, sendResponse);
-    });
-    console.log('[PKOS Clip] Content script loaded on', window.location.href);
   }
 };
 
-// For testing
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = ContentScript;
 }

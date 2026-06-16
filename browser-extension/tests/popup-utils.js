@@ -155,7 +155,7 @@ const PopupUtils = {
   mergeSettings(stored) {
     const defaults = this.getDefaultSettings();
     return { ...defaults, ...stored };
-  },
+  }
 };
 
 module.exports = PopupUtils;

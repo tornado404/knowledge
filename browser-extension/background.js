@@ -28,14 +28,11 @@ chrome.runtime.onInstalled.addListener(async () => {
     title: '保存到 PKOS',
     contexts: ['selection'],
   });
-
-  console.log('[PKOS Clip] Service worker initialized');
 });
 
 // Handle context menu clicks
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === 'pkos-save-selection') {
-    // Send message to content script to get selection with context
     chrome.tabs.sendMessage(tab.id, { type: 'GET_SELECTION' }, (response) => {
       if (chrome.runtime.lastError) {
         console.error('[PKOS Clip] Failed to get selection:', chrome.runtime.lastError);
@@ -48,53 +45,39 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
             text: response.selection,
             html: response.html || '',
             url: tab.url,
-            title: tab.title,
-            timestamp: Date.now(),
+            title: tab.title
           },
         });
         // Open popup programmatically (Chrome 99+)
-        chrome.action.openPopup().catch(() => {
-          // Fallback: show notification that user should open popup
-          console.log('[PKOS Clip] Please click the extension icon to save selection');
-        });
+        chrome.action.openPopup().catch(() => {});
       }
     });
   }
 });
 
+// Message relay mapping: popup message type -> content script message type
+const MESSAGE_RELAY = {
+  'GET_PAGE_INFO': 'GET_PAGE_INFO',
+  'GET_SELECTION_FROM_PAGE': 'GET_SELECTION',
+  'GET_FULLPAGE_CONTENT': 'GET_FULLPAGE'
+};
+
+// Generic relay to content script
+function relayToContentScript(type, sendResponse) {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs[0]) {
+      chrome.tabs.sendMessage(tabs[0].id, { type }, sendResponse);
+    } else {
+      sendResponse({ error: 'No active tab' });
+    }
+  });
+}
+
 // Relay messages between content script and popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'GET_PAGE_INFO') {
-    // Forward to active tab's content script
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]) {
-        chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_PAGE_INFO' }, sendResponse);
-      } else {
-        sendResponse({ error: 'No active tab' });
-      }
-    });
-    return true; // Keep channel open for async response
-  }
-
-  if (message.type === 'GET_SELECTION_FROM_PAGE') {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]) {
-        chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_SELECTION' }, sendResponse);
-      } else {
-        sendResponse({ error: 'No active tab' });
-      }
-    });
-    return true;
-  }
-
-  if (message.type === 'GET_FULLPAGE_CONTENT') {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]) {
-        chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_FULLPAGE' }, sendResponse);
-      } else {
-        sendResponse({ error: 'No active tab' });
-      }
-    });
+  const targetType = MESSAGE_RELAY[message.type];
+  if (targetType) {
+    relayToContentScript(targetType, sendResponse);
     return true;
   }
 });
