@@ -81,29 +81,35 @@ class PDFParser(DocumentParser):
 
 
 class ImageParser(DocumentParser):
-    """Parse image files: store to local storage, generate description placeholder."""
+    """Parse image files: upload to object storage, generate description placeholder."""
 
     ALLOWED_TYPES = {"png", "jpg", "jpeg", "webp", "gif"}
 
-    def parse_file(self, file_path: str, storage_dir: str = "./pkos_images") -> ParsedContent:
+    def __init__(self, storage: Optional["ObjectStorage"] = None):
+        from .storage import ObjectStorage, get_default_storage
+        self.storage = storage or get_default_storage()
+
+    def parse_file(self, file_path: str) -> ParsedContent:
         path = Path(file_path)
         ext = path.suffix.lower().lstrip(".")
         if ext not in self.ALLOWED_TYPES:
             return ParsedContent(raw_text=f"[Unsupported image: {path.name}]")
 
-        # Copy to storage directory
-        storage = Path(storage_dir)
-        storage.mkdir(parents=True, exist_ok=True)
-        dest = storage / path.name
-        import shutil
-        shutil.copy2(path, dest)
+        # Upload to object storage
+        task_id = path.parent.name  # inbox/{task_id}/{filename}
+        remote_key = f"images/{task_id}/{path.name}"
+        public_url = self.storage.put(str(path), remote_key)
 
         # MVP: placeholder description; production uses vision LLM
-        image_ref = f"![AI描述：{path.name}]({dest})"
+        image_ref = f"![AI描述：{path.name}]({public_url})"
         return ParsedContent(
             raw_text=f"## 图片描述\n\n{image_ref}\n\n",
             title=f"图片: {path.stem}",
-            extracted_images=[{"path": str(dest), "filename": path.name}],
+            extracted_images=[{
+                "path": public_url,
+                "filename": path.name,
+                "storage_key": remote_key,
+            }],
         )
 
 

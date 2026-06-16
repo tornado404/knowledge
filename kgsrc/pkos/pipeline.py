@@ -7,11 +7,12 @@ from typing import Optional
 
 from .models import IngestTask, TaskStatus, ParsedContent
 from .store import IngestTaskStore
-from .parsers import DocumentParser
+from .parsers import DocumentParser, ImageParser
 from .classifier import LLMClassifier
 from .vault import VaultManager
 from .indexer import VaultIndexer
 from .dead_letter import DeadLetterQueue
+from .storage import ObjectStorage, get_default_storage
 
 
 class IngestPipeline:
@@ -31,12 +32,14 @@ class IngestPipeline:
         vault_dir: str = "./kgsrc/pkos/vault",
         dlq_dir: str = "./pkos_dead_letter",
         inbox_dir: str = "./pkos_inbox",
+        storage: Optional[ObjectStorage] = None,
     ):
         self.store = IngestTaskStore(storage_dir=task_dir)
         self.vault = VaultManager(vault_dir=vault_dir)
         self.dlq = DeadLetterQueue(dlq_dir=dlq_dir)
         self.classifier = LLMClassifier()
         self.indexer = VaultIndexer()
+        self.storage = storage or get_default_storage()
         self.inbox_dir = Path(inbox_dir)
         self.inbox_dir.mkdir(parents=True, exist_ok=True)
 
@@ -184,6 +187,10 @@ class IngestPipeline:
         parser = DocumentParser.get_parser(task.source_type)
         if not parser:
             return ParsedContent(raw_text=raw_text or "", title="未命名文档")
+
+        # Inject storage into ImageParser
+        if isinstance(parser, ImageParser):
+            parser.storage = self.storage
 
         if raw_text and hasattr(parser, "parse_text"):
             return parser.parse_text(raw_text)
