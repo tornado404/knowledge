@@ -1,7 +1,7 @@
 """Markdown document loader using UnstructuredMarkdownLoader."""
 
 from pathlib import Path
-from typing import List
+from typing import List, Union
 from langchain_core.documents import Document
 from langchain_community.document_loaders import UnstructuredMarkdownLoader
 
@@ -9,7 +9,7 @@ from langchain_community.document_loaders import UnstructuredMarkdownLoader
 class MarkdownLoader:
     """Load Markdown files from a directory."""
 
-    def __init__(self, directory: str | Path = "docs"):
+    def __init__(self, directory: Union[str, Path] = "docs"):
         """Initialize loader with directory path.
 
         Args:
@@ -39,7 +39,7 @@ class MarkdownLoader:
 
         return documents
 
-    def load_single(self, file_path: str | Path) -> List[Document]:
+    def load_single(self, file_path: Union[str, Path]) -> List[Document]:
         """Load a single Markdown file.
 
         Args:

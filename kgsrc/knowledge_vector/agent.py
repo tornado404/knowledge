@@ -69,7 +69,7 @@ REGEX_ROUTES = [
 ]
 
 
-def regex_route(question: str) -> str | None:
+def regex_route(question: str) -> Optional[str]:
     """正则预处理匹配"""
     for pattern, route in REGEX_ROUTES:
         if re.search(pattern, question):
@@ -78,7 +78,7 @@ def regex_route(question: str) -> str | None:
     return None
 
 
-def llm_route(question: str, pre_decision: str | None = None) -> str:
+def llm_route(question: str, pre_decision: Optional[str] = None) -> str:
     """LLM 判断路由"""
     llm = ChatAnthropic(model=config.anthropic_model or "MiniMax-M2.7")
 
@@ -133,7 +133,7 @@ def llm_route(question: str, pre_decision: str | None = None) -> str:
     return decision
 
 
-def post_route(question: str, pre: str | None, llm: str) -> str:
+def post_route(question: str, pre: Optional[str], llm: str) -> str:
     """后处理：日志记录最终决策"""
     print(f"[route.post] 决策依据: 正则={pre}, LLM={llm}")
     print(f"[route.final] 最终路由: {llm}")
