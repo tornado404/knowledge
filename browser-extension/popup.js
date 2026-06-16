@@ -5,7 +5,7 @@
 
   // Application State
   const state = {
-    mode: 'clipboard',  // 'clipboard' | 'selection' | 'fullpage'
+    mode: 'selection',  // 'clipboard' | 'selection' | 'fullpage'
     pageInfo: { title: '', url: '', favicon: '', description: '' },
     content: '',
     contentHtml: '',
@@ -53,11 +53,26 @@
   async function init() {
     await loadSettings();
     await loadPageInfo();
-    await loadClipboardContent();
+    await loadContentForMode();
     renderIdentities();
     renderTags();
     setupEventListeners();
     testConnection();
+  }
+
+  // Load content based on current mode
+  async function loadContentForMode() {
+    switch (state.mode) {
+      case 'clipboard':
+        await loadClipboardContent();
+        break;
+      case 'selection':
+        await getSelectionFromPage();
+        break;
+      case 'fullpage':
+        await getFullPageContent();
+        break;
+    }
   }
 
   // Load settings from chrome.storage.local
