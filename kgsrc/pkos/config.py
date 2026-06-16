@@ -18,6 +18,9 @@ class PKOSConfig:
     indexed_file: str = "./pkos_indexed.json"
     max_file_size_mb: int = 50
     allowed_image_types: tuple = ("png", "jpg", "jpeg", "webp", "gif")
+    # Worker configuration
+    worker_enabled: bool = True
+    worker_poll_interval: float = 1.0
     # Inherit LLM config from base
     anthropic_model: str = ""
     anthropic_api_key: str = ""
@@ -36,6 +39,8 @@ class PKOSConfig:
             image_storage_dir=os.getenv("PKOS_IMAGE_DIR", "./pkos_images"),
             indexed_file=os.getenv("PKOS_INDEXED_FILE", "./pkos_indexed.json"),
             max_file_size_mb=int(os.getenv("PKOS_MAX_FILE_SIZE_MB", "50")),
+            worker_enabled=os.getenv("PKOS_WORKER_ENABLED", "true").lower() == "true",
+            worker_poll_interval=float(os.getenv("PKOS_WORKER_POLL_INTERVAL", "1.0")),
             anthropic_model=_base_config.anthropic_model,
             anthropic_api_key=_base_config.anthropic_api_key,
             anthropic_base_url=_base_config.anthropic_base_url,
