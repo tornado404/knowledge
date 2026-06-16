@@ -26,6 +26,9 @@ class PKOSConfig:
     s3_bucket: str = "pkos"
     s3_region: str = "us-east-1"
     s3_secure: bool = False
+    # Worker configuration
+    worker_enabled: bool = True
+    worker_poll_interval: float = 1.0
     # Inherit LLM config from base
     anthropic_model: str = ""
     anthropic_api_key: str = ""
@@ -53,6 +56,8 @@ class PKOSConfig:
             s3_region=os.getenv("PKOS_S3_REGION", "us-east-1"),
             s3_secure=os.getenv("PKOS_S3_SECURE", "false").lower() == "true",
             pkos_dashboard_enabled=os.getenv("PKOS_DASHBOARD_ENABLED", "true").lower() == "true",
+            worker_enabled=os.getenv("PKOS_WORKER_ENABLED", "true").lower() == "true",
+            worker_poll_interval=float(os.getenv("PKOS_WORKER_POLL_INTERVAL", "1.0")),
             anthropic_model=_base_config.anthropic_model,
             anthropic_api_key=_base_config.anthropic_api_key,
             anthropic_base_url=_base_config.anthropic_base_url,

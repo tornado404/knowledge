@@ -14,6 +14,7 @@ from .indexer import VaultIndexer
 from .dead_letter import DeadLetterQueue
 from .logger import PipelineLogger
 from .storage import ObjectStorage, get_default_storage
+from .events import EventManager
 
 
 class IngestPipeline:
@@ -34,6 +35,7 @@ class IngestPipeline:
         dlq_dir: str = "./pkos_dead_letter",
         inbox_dir: str = "./pkos_inbox",
         storage: Optional[ObjectStorage] = None,
+        event_manager: Optional[EventManager] = None,
     ):
         self.store = IngestTaskStore(storage_dir=task_dir)
         self.vault = VaultManager(vault_dir=vault_dir)
@@ -44,6 +46,7 @@ class IngestPipeline:
         self.inbox_dir = Path(inbox_dir)
         self.inbox_dir.mkdir(parents=True, exist_ok=True)
         self.logger = PipelineLogger()
+        self.event_manager = event_manager or EventManager()
 
     def register(
         self,
@@ -73,6 +76,25 @@ class IngestPipeline:
         if error:
             task.error = error
         self.store.save(task)
+
+        # Publish progress event
+        if self.event_manager:
+            progress = {
+                TaskStatus.REGISTERED: 0.0,
+                TaskStatus.PARSING: 0.2,
+                TaskStatus.UNDERSTANDING: 0.4,
+                TaskStatus.CLASSIFYING: 0.6,
+                TaskStatus.ARCHIVING: 0.8,
+                TaskStatus.INDEXED: 1.0,
+                TaskStatus.FAILED: -1.0,
+                TaskStatus.DEAD_LETTER: -1.0,
+            }.get(new_status, 0.0)
+            self.event_manager.publish(task.task_id, {
+                "stage": new_status.value,
+                "status": new_status.value,
+                "progress": progress,
+                "error": error,
+            })
 
     def _should_retry(self, task: IngestTask) -> bool:
         return task.retry_count < self.MAX_RETRIES

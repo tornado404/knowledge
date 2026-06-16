@@ -1,23 +1,51 @@
 """PKOS FastAPI router for ingest pipeline endpoints."""
 
+from contextlib import asynccontextmanager
 from typing import Optional
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .pipeline import IngestPipeline
+from .worker import TaskWorker
+from .events import EventManager
+from .config import pkos_config
 
 
 router = APIRouter(prefix="/pkos/v1", tags=["pkos"])
 
-# Global pipeline instance (lazy init)
+# Global instances
 _pipeline: Optional[IngestPipeline] = None
+_worker: Optional[TaskWorker] = None
+_event_manager = EventManager()
 
 
 def get_pipeline() -> IngestPipeline:
     global _pipeline
     if _pipeline is None:
-        _pipeline = IngestPipeline()
+        _pipeline = IngestPipeline(event_manager=_event_manager)
     return _pipeline
+
+
+def get_worker() -> TaskWorker:
+    global _worker
+    if _worker is None:
+        _worker = TaskWorker(
+            pipeline=get_pipeline(),
+            enabled=pkos_config.worker_enabled,
+            poll_interval=pkos_config.worker_poll_interval,
+        )
+        _worker.start()
+    return _worker
+
+
+@asynccontextmanager
+async def lifespan(app):
+    """FastAPI lifespan — graceful shutdown of the background worker."""
+    yield
+    global _worker
+    if _worker:
+        _worker.stop()
 
 
 class IngestResponse(BaseModel):
@@ -59,7 +87,7 @@ async def ingest(
     identities: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
 ):
-    """Register a new ingest task."""
+    """Register a new ingest task and auto-submit to the background worker."""
     pipeline = get_pipeline()
 
     id_list = []
@@ -73,16 +101,37 @@ async def ingest(
     )
 
     # If file uploaded, save to inbox for later processing
+    inbox_path = None
     if file:
         inbox_path = pipeline.inbox_dir / f"{task.task_id}_{file.filename}"
         content = await file.read()
         with open(inbox_path, "wb") as f:
             f.write(content)
 
+    # Auto-submit to background worker
+    get_worker().submit(
+        task.task_id,
+        raw_text=None,
+        file_path=str(inbox_path) if inbox_path else None,
+    )
+
     return IngestResponse(
         task_id=task.task_id,
         status=task.status.value,
         created_at=task.created_at,
+    )
+
+
+@router.get("/ingest/{task_id}/events")
+async def task_events(task_id: str):
+    """SSE event stream for a task's progress.
+
+    Returns a text/event-stream response that pushes progress
+    updates as the task moves through the pipeline stages.
+    """
+    return StreamingResponse(
+        _event_manager.event_stream(task_id),
+        media_type="text/event-stream",
     )
 
 
